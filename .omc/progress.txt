@@ -1,0 +1,41 @@
+# Agito v2 Progress
+
+## Phase 0-3 — Complete (2026-03-14)
+- See previous entries
+
+## Phase 4 — Complete (2026-03-14)
+
+### US-401: ui-store extension
+- Added AppTab type ('runtime'|'layout'|'settings'), activeTab, sidebarExpanded, draggingManifestId
+
+### US-402: Sidebar + App refactor
+- Sidebar.tsx: collapsible (48px→180px), 3 tabs (Zap/LayoutGrid/Settings from lucide-react), toggle button
+- App.tsx: flex layout Sidebar|main, tab-conditional overlays, canvas always rendered
+
+### US-403: Item manifests + FurnitureSprite
+- item-manifests.ts: 13 items (10 furniture + 3 floor_decor), getManifestById helper
+- FurnitureSprite: procedural colored rectangles (#5a4a3a furniture, #3a4a5a floor_decor)
+- Layer separation: furniture→ySortContainer (Y-sort), floor_decor→floorDecorLayer
+
+### US-404: ItemPalette + drag-drop
+- ItemPalette.tsx: right-side panel, categorized item cards, HTML draggable
+- App.tsx: onDragOver/onDrop on canvas wrapper, grid-snap + collision check, crypto.randomUUID()
+
+### US-405: Furniture move/delete + character drag
+- Layout mode: furniture PixiJS drag (grid-snap, collision exclusion, revert on invalid)
+- Layout mode: right-click remove furniture
+- Layout mode: character drag + CHARACTER_UPDATE IPC
+- Runtime mode: existing click/rightclick preserved
+- room-store: moveItem action added
+
+### US-406: Settings panel
+- SettingsPanel.tsx: engine CLI detection, data directory, theme placeholder
+
+### US-407: Integration
+- typecheck 0 errors, build 2,368kB, app boots with sidebar
+
+### New files
+- Sidebar.tsx, ItemPalette.tsx, SettingsPanel.tsx, item-manifests.ts
+
+### Modified files
+- ui-store.ts, App.tsx, OfficeCanvas.tsx, room-store.ts

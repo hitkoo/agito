@@ -1,0 +1,1221 @@
+import { Stage, Container, Graphics, Text, Sprite, useTick } from '@pixi/react'
+import { type ReactElement, useCallback, useMemo, useState, useEffect, useRef } from 'react'
+import { Graphics as PixiGraphics, TextStyle, Container as PixiContainer, Texture } from 'pixi.js'
+import { loadTexture } from './AssetLoader'
+import { useCharacterStore } from '../stores/character-store'
+import { useUIStore, type AppTab, type ThemeMode } from '../stores/ui-store'
+import { useRoomStore } from '../stores/room-store'
+import { GRID_COLS, GRID_ROWS, WALL_ROWS } from '../../../shared/constants'
+import type {
+  Character,
+  CharacterStatus,
+  PlacedItem,
+  ItemManifest,
+  GridPosition,
+  ItemFootprint,
+} from '../../../shared/types'
+import { getManifestById } from '../../../shared/item-manifests'
+import { IPC_COMMANDS } from '../../../shared/ipc-channels'
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+interface ColorPalette {
+  canvasBg: number
+  wall: number
+  floorA: number
+  floorB: number
+  grid: number
+}
+
+const DARK_PALETTE: ColorPalette = {
+  canvasBg: 0x1a1a2e,
+  wall: 0x141430,
+  floorA: 0x1e1e3a,
+  floorB: 0x1c1c36,
+  grid: 0x2a2a4a,
+}
+
+const LIGHT_PALETTE: ColorPalette = {
+  canvasBg: 0xf0f0f0,
+  wall: 0xe0e0e0,
+  floorA: 0xe8e8ec,
+  floorB: 0xe2e2e6,
+  grid: 0xd0d0d8,
+}
+
+function getEffectiveMode(theme: ThemeMode): 'dark' | 'light' {
+  if (theme === 'system') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+  return theme
+}
+
+const STATUS_COLORS: Record<CharacterStatus, number> = {
+  idle: 0x6c757d,
+  working: 0x4ecdc4,
+  error: 0xff6b6b,
+  done: 0x51cf66,
+  waiting: 0xffd93d,
+}
+
+// ---------------------------------------------------------------------------
+// Collision helper
+// ---------------------------------------------------------------------------
+
+function checkCollision(
+  position: GridPosition,
+  footprint: ItemFootprint,
+  occupiedCells: Set<string>,
+  excludeItemId?: string,
+  allItems?: PlacedItem[]
+): boolean {
+  // Build a set of cells to exclude (belonging to the item being moved)
+  const excludeCells = new Set<string>()
+  if (excludeItemId && allItems) {
+    const excluded = allItems.find((i) => i.id === excludeItemId)
+    if (excluded) {
+      for (let dy = 0; dy < excluded.footprint.h; dy++) {
+        for (let dx = 0; dx < excluded.footprint.w; dx++) {
+          excludeCells.add(`${excluded.position.x + dx},${excluded.position.y + dy}`)
+        }
+      }
+    }
+  }
+
+  for (let dy = 0; dy < footprint.h; dy++) {
+    for (let dx = 0; dx < footprint.w; dx++) {
+      const key = `${position.x + dx},${position.y + dy}`
+      if (occupiedCells.has(key) && !excludeCells.has(key)) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+// ---------------------------------------------------------------------------
+// useWindowSize
+// ---------------------------------------------------------------------------
+
+function useWindowSize(): { width: number; height: number } {
+  const [size, setSize] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  })
+
+  useEffect(() => {
+    const onResize = (): void => {
+      setSize({ width: window.innerWidth, height: window.innerHeight })
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  return size
+}
+
+// ---------------------------------------------------------------------------
+// BackgroundLayer
+// ---------------------------------------------------------------------------
+
+function BackgroundLayer({
+  cellSize,
+  palette,
+}: {
+  cellSize: number
+  palette: ColorPalette
+}): ReactElement {
+  const drawFloor = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+
+      // Wall area — top WALL_ROWS rows
+      g.beginFill(palette.wall, 1)
+      g.drawRect(0, 0, GRID_COLS * cellSize, WALL_ROWS * cellSize)
+      g.endFill()
+
+      // Floor tiles — alternating checkerboard below wall
+      for (let row = WALL_ROWS; row < GRID_ROWS; row++) {
+        for (let col = 0; col < GRID_COLS; col++) {
+          const isEven = (row + col) % 2 === 0
+          const color = isEven ? palette.floorA : palette.floorB
+          g.beginFill(color, 1)
+          g.drawRect(col * cellSize, row * cellSize, cellSize, cellSize)
+          g.endFill()
+        }
+      }
+
+      // Grid overlay — faint lines
+      g.lineStyle(1, palette.grid, 0.15)
+      for (let x = 0; x <= GRID_COLS; x++) {
+        g.moveTo(x * cellSize, 0)
+        g.lineTo(x * cellSize, GRID_ROWS * cellSize)
+      }
+      for (let y = 0; y <= GRID_ROWS; y++) {
+        g.moveTo(0, y * cellSize)
+        g.lineTo(GRID_COLS * cellSize, y * cellSize)
+      }
+    },
+    [cellSize, palette]
+  )
+
+  return <Graphics draw={drawFloor} />
+}
+
+// ---------------------------------------------------------------------------
+// Status effect sub-components (animated)
+// ---------------------------------------------------------------------------
+
+// Idle: breathing scale animation applied via parent Container ref
+function IdleEffect({
+  w,
+  h,
+  color,
+}: {
+  w: number
+  h: number
+  color: number
+}): ReactElement {
+  const elapsed = useRef(0)
+  const containerRef = useRef<import('pixi.js').Container | null>(null)
+
+  useTick((delta) => {
+    elapsed.current += delta
+    if (containerRef.current) {
+      const scale = 1 + 0.02 * Math.sin((elapsed.current / 60) * Math.PI)
+      containerRef.current.scale.set(scale)
+      containerRef.current.pivot.set(w / 2, h / 2)
+      containerRef.current.position.set(w / 2, h / 2)
+    }
+  })
+
+  const draw = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(color, 0.8)
+      g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
+      g.endFill()
+      g.lineStyle(2, 0xffffff, 0.4)
+      g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
+    },
+    [w, h, color]
+  )
+
+  return (
+    <Container ref={containerRef}>
+      <Graphics draw={draw} />
+    </Container>
+  )
+}
+
+// Working: pulsing glow + blinking activity dot
+function WorkingEffect({ w, h, color }: { w: number; h: number; color: number }): ReactElement {
+  const elapsed = useRef(0)
+  const glowRef = useRef<PixiGraphics | null>(null)
+  const dotRef = useRef<PixiGraphics | null>(null)
+
+  useTick((delta) => {
+    elapsed.current += delta
+    const t = elapsed.current / 60
+
+    if (glowRef.current) {
+      const alpha = 0.2 + 0.4 * ((Math.sin(t * Math.PI * 2) + 1) / 2)
+      glowRef.current.alpha = alpha
+    }
+    if (dotRef.current) {
+      const blinkAlpha = Math.sin(t * Math.PI * 3) > 0 ? 1 : 0.1
+      dotRef.current.alpha = blinkAlpha
+    }
+  })
+
+  const drawGlow = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(color, 1)
+      g.drawRoundedRect(-4, -4, w + 8, h + 8, 12)
+      g.endFill()
+    },
+    [w, h, color]
+  )
+
+  const drawShape = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(color, 0.9)
+      g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
+      g.endFill()
+      g.lineStyle(2, 0xffffff, 0.6)
+      g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
+    },
+    [w, h, color]
+  )
+
+  const drawDot = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(0xffffff, 1)
+      g.drawCircle(0, 0, 3)
+      g.endFill()
+    },
+    []
+  )
+
+  return (
+    <>
+      <Graphics ref={glowRef} draw={drawGlow} />
+      <Graphics draw={drawShape} />
+      <Graphics ref={dotRef} draw={drawDot} x={w - 10} y={10} />
+    </>
+  )
+}
+
+// Error: static red glow + "!" badge
+function ErrorEffect({ w, h, color }: { w: number; h: number; color: number }): ReactElement {
+  const drawGlow = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(color, 0.4)
+      g.drawRoundedRect(-6, -6, w + 12, h + 12, 14)
+      g.endFill()
+    },
+    [w, h, color]
+  )
+
+  const drawShape = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(color, 0.9)
+      g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
+      g.endFill()
+      g.lineStyle(2, 0xffffff, 0.6)
+      g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
+    },
+    [w, h, color]
+  )
+
+  const badgeStyle = useMemo(
+    () =>
+      new TextStyle({
+        fontSize: Math.max(10, w * 0.25),
+        fill: 0xffffff,
+        fontFamily: 'monospace',
+        fontWeight: 'bold',
+      }),
+    [w]
+  )
+
+  return (
+    <>
+      <Graphics draw={drawGlow} />
+      <Graphics draw={drawShape} />
+      <Text text="!" x={w - 6} y={2} anchor={{ x: 0.5, y: 0 }} style={badgeStyle} />
+    </>
+  )
+}
+
+// Done: green shape + "✓" badge, visual transitions to idle after 3s
+function DoneEffect({ w, h, color }: { w: number; h: number; color: number }): ReactElement {
+  const [showCheck, setShowCheck] = useState(true)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setShowCheck(false), 3000)
+    return () => clearTimeout(timer)
+  }, [])
+
+  const drawShape = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      const c = showCheck ? color : STATUS_COLORS.idle
+      g.beginFill(c, 0.8)
+      g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
+      g.endFill()
+      g.lineStyle(2, 0xffffff, 0.4)
+      g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
+    },
+    [w, h, color, showCheck]
+  )
+
+  const badgeStyle = useMemo(
+    () =>
+      new TextStyle({
+        fontSize: Math.max(10, w * 0.25),
+        fill: 0xffffff,
+        fontFamily: 'monospace',
+        fontWeight: 'bold',
+      }),
+    [w]
+  )
+
+  return (
+    <>
+      <Graphics draw={drawShape} />
+      {showCheck && (
+        <Text text="✓" x={w - 6} y={2} anchor={{ x: 0.5, y: 0 }} style={badgeStyle} />
+      )}
+    </>
+  )
+}
+
+// Waiting: speech bubble with "..." above the character
+function WaitingEffect({ w, h, color }: { w: number; h: number; color: number }): ReactElement {
+  const drawShape = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(color, 0.8)
+      g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
+      g.endFill()
+      g.lineStyle(2, 0xffffff, 0.4)
+      g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
+    },
+    [w, h, color]
+  )
+
+  const drawBubble = useCallback(
+    (g: PixiGraphics) => {
+      const bw = w * 0.7
+      const bh = 18
+      const bx = (w - bw) / 2
+      const by = -bh - 8
+      g.clear()
+      g.beginFill(0xffffff, 0.9)
+      g.drawRoundedRect(bx, by, bw, bh, 4)
+      g.endFill()
+      // Tail triangle
+      g.beginFill(0xffffff, 0.9)
+      g.drawPolygon([w / 2 - 4, by + bh, w / 2 + 4, by + bh, w / 2, by + bh + 6])
+      g.endFill()
+    },
+    [w]
+  )
+
+  const dotStyle = useMemo(
+    () =>
+      new TextStyle({
+        fontSize: Math.max(8, w * 0.2),
+        fill: 0x333333,
+        fontFamily: 'monospace',
+        fontWeight: 'bold',
+      }),
+    [w]
+  )
+
+  const bh = 18
+  const by = -bh - 8
+
+  return (
+    <>
+      <Graphics draw={drawShape} />
+      <Graphics draw={drawBubble} />
+      <Text
+        text="..."
+        x={w / 2}
+        y={by + bh / 2}
+        anchor={{ x: 0.5, y: 0.5 }}
+        style={dotStyle}
+      />
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// SelectionBorder — dashed border around selected item
+// ---------------------------------------------------------------------------
+
+function SelectionBorder({ w, h }: { w: number; h: number }): ReactElement {
+  const draw = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      const dashLen = 6
+      const gapLen = 4
+      const lineW = 2
+      g.lineStyle(lineW, 0xffffff, 0.9)
+
+      // Top edge
+      for (let x = 0; x < w; x += dashLen + gapLen) {
+        g.moveTo(x, 0)
+        g.lineTo(Math.min(x + dashLen, w), 0)
+      }
+      // Bottom edge
+      for (let x = 0; x < w; x += dashLen + gapLen) {
+        g.moveTo(x, h)
+        g.lineTo(Math.min(x + dashLen, w), h)
+      }
+      // Left edge
+      for (let y = 0; y < h; y += dashLen + gapLen) {
+        g.moveTo(0, y)
+        g.lineTo(0, Math.min(y + dashLen, h))
+      }
+      // Right edge
+      for (let y = 0; y < h; y += dashLen + gapLen) {
+        g.moveTo(w, y)
+        g.lineTo(w, Math.min(y + dashLen, h))
+      }
+    },
+    [w, h]
+  )
+
+  return <Graphics draw={draw} />
+}
+
+// ---------------------------------------------------------------------------
+// ResizeHandle — draggable handle at bottom-right corner
+// ---------------------------------------------------------------------------
+
+function ResizeHandle({
+  parentW,
+  parentH,
+  cellSize,
+  itemPixelX,
+  itemPixelY,
+  onResize,
+  onDragStateChange,
+}: {
+  parentW: number
+  parentH: number
+  cellSize: number
+  itemPixelX: number
+  itemPixelY: number
+  onResize: (newW: number, newH: number) => void
+  onDragStateChange?: (dragging: boolean) => void
+}): ReactElement {
+  const handleSize = 18
+  const dragging = useRef(false)
+
+  const draw = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      // Rounded background
+      g.beginFill(0x3a3a3a, 0.9)
+      g.drawRoundedRect(0, 0, handleSize, handleSize, 4)
+      g.endFill()
+      // Diagonal resize lines (↘ pattern)
+      g.lineStyle(1.5, 0xcccccc, 0.9)
+      g.moveTo(6, handleSize - 4)
+      g.lineTo(handleSize - 4, 6)
+      g.moveTo(10, handleSize - 4)
+      g.lineTo(handleSize - 4, 10)
+      g.moveTo(14, handleSize - 4)
+      g.lineTo(handleSize - 4, 14)
+    },
+    []
+  )
+
+  const onPointerDown = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      dragging.current = true
+      onDragStateChange?.(true)
+      e.stopPropagation()
+    },
+    [onDragStateChange]
+  )
+
+  const onGlobalPointerMove = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      if (!dragging.current) return
+      const newGridW = Math.max(1, Math.round((e.global.x - itemPixelX) / cellSize))
+      const newGridH = Math.max(1, Math.round((e.global.y - itemPixelY) / cellSize))
+      const clampedW = Math.min(newGridW, GRID_COLS - Math.round(itemPixelX / cellSize))
+      const clampedH = Math.min(newGridH, GRID_ROWS - Math.round(itemPixelY / cellSize))
+      onResize(Math.max(1, clampedW), Math.max(1, clampedH))
+    },
+    [cellSize, itemPixelX, itemPixelY, onResize]
+  )
+
+  const onPointerUp = useCallback(() => {
+    dragging.current = false
+    onDragStateChange?.(false)
+  }, [onDragStateChange])
+
+  return (
+    <Graphics
+      draw={draw}
+      x={parentW - handleSize - 2}
+      y={parentH - handleSize - 2}
+      interactive
+      cursor="nwse-resize"
+      pointerdown={onPointerDown}
+      onglobalpointermove={onGlobalPointerMove}
+      pointerup={onPointerUp}
+      pointerupoutside={onPointerUp}
+    />
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ZOrderControls — up/down buttons for manual z-index adjustment
+// ---------------------------------------------------------------------------
+
+function ZOrderControls({
+  parentW,
+  parentH,
+  onUp,
+  onDown,
+}: {
+  parentW: number
+  parentH: number
+  onUp: () => void
+  onDown: () => void
+}): ReactElement {
+  const btnW = 24
+  const btnH = 22
+  const gap = 2
+  const totalH = btnH * 2 + gap
+  const xPos = parentW
+  const yPos = (parentH - totalH) / 2
+
+  // Invisible hit area covering the gap between item and buttons to prevent hover loss
+  const drawHitArea = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(0x000000, 0.001)
+      g.drawRect(-8, -4, btnW + 12, totalH + 8)
+      g.endFill()
+    },
+    [totalH]
+  )
+
+  const drawBtn = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(0x4a4a4a, 0.9)
+      g.drawRoundedRect(0, 0, btnW, btnH, 6)
+      g.endFill()
+    },
+    []
+  )
+
+  const drawChevronUp = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.lineStyle(2.5, 0xffffff, 0.9)
+      // ^ chevron shape
+      g.moveTo(7, 14)
+      g.lineTo(12, 8)
+      g.lineTo(17, 14)
+    },
+    []
+  )
+
+  const drawChevronDown = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.lineStyle(2.5, 0xffffff, 0.9)
+      // v chevron shape
+      g.moveTo(7, 8)
+      g.lineTo(12, 14)
+      g.lineTo(17, 8)
+    },
+    []
+  )
+
+  const onUpDown = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      e.stopPropagation()
+      onUp()
+    },
+    [onUp]
+  )
+
+  const onDownDown = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      e.stopPropagation()
+      onDown()
+    },
+    [onDown]
+  )
+
+  return (
+    <Container x={xPos} y={yPos} interactive>
+      <Graphics draw={drawHitArea} />
+      <Container interactive cursor="pointer" pointerdown={onUpDown}>
+        <Graphics draw={drawBtn} />
+        <Graphics draw={drawChevronUp} />
+      </Container>
+      <Container y={btnH + gap} interactive cursor="pointer" pointerdown={onDownDown}>
+        <Graphics draw={drawBtn} />
+        <Graphics draw={drawChevronDown} />
+      </Container>
+    </Container>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// FurnitureSprite
+// ---------------------------------------------------------------------------
+
+const FURNITURE_FILL = 0x5a4a3a
+const TILE_FILL = 0x3a4a5a
+
+function FurnitureSprite({
+  item,
+  cellSize,
+  manifest,
+  zIndex,
+  activeTab,
+  isSelected,
+}: {
+  item: PlacedItem
+  cellSize: number
+  manifest: ItemManifest
+  zIndex?: number
+  activeTab: AppTab
+  isSelected: boolean
+}): ReactElement {
+  const w = item.footprint.w * cellSize
+  const h = item.footprint.h * cellSize
+  const fillColor = manifest.category === 'furniture' ? FURNITURE_FILL : TILE_FILL
+  const borderColor = manifest.category === 'furniture' ? 0x7a6a5a : 0x5a6a7a
+  const isLayout = activeTab === 'layout'
+  const [isHovered, setIsHovered] = useState(false)
+  const isResizingFurn = useRef(false)
+  const showHandles = isLayout && (isSelected || isHovered)
+
+  const [texture, setTexture] = useState<Texture | null>(null)
+  useEffect(() => {
+    if (manifest.texture) {
+      loadTexture(manifest.texture).then(setTexture)
+    } else {
+      setTexture(null)
+    }
+  }, [manifest.texture])
+
+  const containerRef = useRef<PixiContainer | null>(null)
+  const dragging = useRef(false)
+  const hasMoved = useRef(false)
+  const dragStart = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const originalPos = useRef<GridPosition>({ x: item.position.x, y: item.position.y })
+
+  const draw = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(fillColor, 1)
+      g.drawRect(0, 0, w, h)
+      g.endFill()
+      g.lineStyle(2, borderColor, 1)
+      g.drawRect(0, 0, w, h)
+    },
+    [w, h, fillColor, borderColor]
+  )
+
+  const labelStyle = useMemo(
+    () =>
+      new TextStyle({
+        fontSize: Math.max(8, cellSize * 0.3),
+        fill: 0xe0e0e0,
+        fontFamily: 'monospace',
+      }),
+    [cellSize]
+  )
+
+  const onPointerDown = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      if (!isLayout) return
+      if (e.button === 2) return // right-click handled separately
+      dragging.current = true
+      hasMoved.current = false
+      originalPos.current = { x: item.position.x, y: item.position.y }
+      const globalPos = e.global
+      dragStart.current = { x: globalPos.x, y: globalPos.y }
+      if (containerRef.current) {
+        containerRef.current.cursor = 'grabbing'
+      }
+      e.stopPropagation()
+    },
+    [isLayout, item.position.x, item.position.y]
+  )
+
+  const onPointerMove = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      if (!dragging.current || !containerRef.current) return
+      const globalPos = e.global
+      const dx = globalPos.x - dragStart.current.x
+      const dy = globalPos.y - dragStart.current.y
+      if (!hasMoved.current && Math.abs(dx) < 5 && Math.abs(dy) < 5) return
+      if (!hasMoved.current) useUIStore.getState().setIsDraggingItem(true)
+      hasMoved.current = true
+      const newPixelX = originalPos.current.x * cellSize + dx
+      const newPixelY = originalPos.current.y * cellSize + dy
+      const gridX = Math.max(0, Math.min(GRID_COLS - item.footprint.w, Math.round(newPixelX / cellSize)))
+      const gridY = Math.max(0, Math.min(GRID_ROWS - item.footprint.h, Math.round(newPixelY / cellSize)))
+      containerRef.current.x = gridX * cellSize
+      containerRef.current.y = gridY * cellSize
+    },
+    [cellSize, item.footprint.w, item.footprint.h]
+  )
+
+  const onPointerUp = useCallback(
+    () => {
+      if (!dragging.current || !containerRef.current) return
+      dragging.current = false
+      containerRef.current.cursor = 'grab'
+      useUIStore.getState().setIsDraggingItem(false)
+
+      if (!hasMoved.current) {
+        useUIStore.getState().selectLayoutItem({ type: 'furniture', id: item.id })
+        return
+      }
+
+      const newGridX = Math.round(containerRef.current.x / cellSize)
+      const newGridY = Math.round(containerRef.current.y / cellSize)
+      const newPos: GridPosition = { x: newGridX, y: newGridY }
+
+      useRoomStore.getState().moveItem(item.id, newPos)
+    },
+    [cellSize, item.id]
+  )
+
+  const onRightClick = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      if (!isLayout) return
+      e.preventDefault?.()
+      e.stopPropagation()
+      const native = e.nativeEvent as MouseEvent
+      useUIStore.getState().openLayoutContextMenu('furniture', item.id, native.clientX, native.clientY)
+    },
+    [isLayout, item.id]
+  )
+
+  const onResizeFurniture = useCallback(
+    (newW: number, newH: number) => {
+      useRoomStore.getState().resizeItem(item.id, { w: newW, h: newH })
+    },
+    [item.id]
+  )
+
+  return (
+    <Container
+      ref={containerRef}
+      x={item.position.x * cellSize}
+      y={item.position.y * cellSize}
+      zIndex={zIndex ?? 0}
+      interactive={isLayout}
+      cursor={isLayout ? 'grab' : 'default'}
+      pointerdown={isLayout ? onPointerDown : undefined}
+      onglobalpointermove={isLayout ? onPointerMove : undefined}
+      pointerup={isLayout ? onPointerUp : undefined}
+      pointerupoutside={isLayout ? onPointerUp : undefined}
+      rightclick={isLayout ? onRightClick : undefined}
+      pointerover={isLayout ? () => { if (!useUIStore.getState().isDraggingItem) setIsHovered(true) } : undefined}
+      pointerout={isLayout ? () => { if (!isResizingFurn.current) setIsHovered(false) } : undefined}
+    >
+      {texture ? (
+        <Sprite texture={texture} width={w} height={h} />
+      ) : (
+        <Graphics draw={draw} />
+      )}
+      <Text text={manifest.name} x={w / 2} y={h + 4} anchor={{ x: 0.5, y: 0 }} style={labelStyle} />
+      {showHandles && (
+        <>
+          <SelectionBorder w={w} h={h} />
+          <ResizeHandle
+            parentW={w}
+            parentH={h}
+            cellSize={cellSize}
+            itemPixelX={item.position.x * cellSize}
+            itemPixelY={item.position.y * cellSize}
+            onResize={onResizeFurniture}
+            onDragStateChange={(d) => { isResizingFurn.current = d }}
+          />
+          <ZOrderControls
+            parentW={w}
+            parentH={h}
+            onUp={() => useRoomStore.getState().updateItemZOrder(item.id, (item.zOrder ?? 0) + 1)}
+            onDown={() => useRoomStore.getState().updateItemZOrder(item.id, (item.zOrder ?? 0) - 1)}
+          />
+        </>
+      )}
+    </Container>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// CharacterSprite
+// ---------------------------------------------------------------------------
+
+function CharacterSprite({
+  character,
+  cellSize,
+  onSelect,
+  onRightClick,
+  activeTab,
+  isSelected,
+}: {
+  character: Character
+  cellSize: number
+  onSelect: (id: string | null) => void
+  onRightClick: (characterId: string, x: number, y: number) => void
+  activeTab: AppTab
+  isSelected: boolean
+}): ReactElement {
+  const fp = character.footprint ?? { w: 2, h: 2 }
+  const x = character.gridPosition.x * cellSize
+  const y = character.gridPosition.y * cellSize
+  const w = fp.w * cellSize
+  const h = fp.h * cellSize
+  const isLayout = activeTab === 'layout'
+  const [isHoveredChar, setIsHoveredChar] = useState(false)
+  const isResizingChar = useRef(false)
+  const showHandlesChar = isLayout && (isSelected || isHoveredChar)
+
+  const [texture, setTexture] = useState<Texture | null>(null)
+  useEffect(() => {
+    if (character.sprite) {
+      loadTexture(character.sprite).then(setTexture)
+    } else {
+      setTexture(null)
+    }
+  }, [character.sprite])
+
+  const containerRef = useRef<PixiContainer | null>(null)
+  const dragging = useRef(false)
+  const hasMoved = useRef(false)
+  const dragStart = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const originalPos = useRef<GridPosition>({
+    x: character.gridPosition.x,
+    y: character.gridPosition.y,
+  })
+
+  const color = STATUS_COLORS[character.status] ?? STATUS_COLORS.idle
+
+  const labelStyle = useMemo(
+    () =>
+      new TextStyle({
+        fontSize: Math.max(10, cellSize * 0.35),
+        fill: 0xe0e0e0,
+        fontFamily: 'monospace',
+      }),
+    [cellSize]
+  )
+
+  const drawBorderGlow = useCallback((g: PixiGraphics) => {
+    g.clear()
+    g.lineStyle(3, color, 0.7)
+    g.drawRoundedRect(0, 0, w, h, 6)
+  }, [w, h, color])
+
+  const statusEffect = useMemo((): ReactElement => {
+    switch (character.status) {
+      case 'idle':
+        return <IdleEffect w={w} h={h} color={color} />
+      case 'working':
+        return <WorkingEffect w={w} h={h} color={color} />
+      case 'error':
+        return <ErrorEffect w={w} h={h} color={color} />
+      case 'done':
+        return <DoneEffect w={w} h={h} color={color} />
+      case 'waiting':
+        return <WaitingEffect w={w} h={h} color={color} />
+      default:
+        return <IdleEffect w={w} h={h} color={color} />
+    }
+  }, [character.status, w, h, color])
+
+  const onPointerDown = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      if (isLayout) {
+        if (e.button === 2) return
+        dragging.current = true
+        hasMoved.current = false
+        originalPos.current = {
+          x: character.gridPosition.x,
+          y: character.gridPosition.y,
+        }
+        dragStart.current = { x: e.global.x, y: e.global.y }
+        if (containerRef.current) {
+          containerRef.current.cursor = 'grabbing'
+        }
+        e.stopPropagation()
+      } else {
+        if (e.button === 2) {
+          e.preventDefault?.()
+          const native = e.nativeEvent as MouseEvent
+          onRightClick(character.id, native.clientX, native.clientY)
+        } else {
+          onSelect(character.id)
+        }
+      }
+    },
+    [isLayout, character.gridPosition.x, character.gridPosition.y, character.id, onSelect, onRightClick]
+  )
+
+  const onPointerMove = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      if (!dragging.current || !containerRef.current) return
+      const dx = e.global.x - dragStart.current.x
+      const dy = e.global.y - dragStart.current.y
+      if (!hasMoved.current && Math.abs(dx) < 5 && Math.abs(dy) < 5) return
+      if (!hasMoved.current) useUIStore.getState().setIsDraggingItem(true)
+      hasMoved.current = true
+      const newPixelX = originalPos.current.x * cellSize + dx
+      const newPixelY = originalPos.current.y * cellSize + dy
+      const gridX = Math.max(0, Math.min(GRID_COLS - fp.w, Math.round(newPixelX / cellSize)))
+      const gridY = Math.max(0, Math.min(GRID_ROWS - fp.h, Math.round(newPixelY / cellSize)))
+      containerRef.current.x = gridX * cellSize
+      containerRef.current.y = gridY * cellSize
+    },
+    [cellSize, fp.w, fp.h]
+  )
+
+  const onPointerUp = useCallback(
+    () => {
+      if (!dragging.current || !containerRef.current) return
+      dragging.current = false
+      containerRef.current.cursor = 'grab'
+      useUIStore.getState().setIsDraggingItem(false)
+
+      if (!hasMoved.current) {
+        useUIStore.getState().selectLayoutItem({ type: 'character', id: character.id })
+        return
+      }
+
+      const newGridX = Math.round(containerRef.current.x / cellSize)
+      const newGridY = Math.round(containerRef.current.y / cellSize)
+
+      if (
+        newGridX !== originalPos.current.x ||
+        newGridY !== originalPos.current.y
+      ) {
+        window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, character.id, {
+          gridPosition: { x: newGridX, y: newGridY },
+        })
+      }
+    },
+    [cellSize, character.id]
+  )
+
+  const onRightClickHandler = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      e.preventDefault?.()
+      const native = e.nativeEvent as MouseEvent
+      if (isLayout) {
+        e.stopPropagation()
+        useUIStore.getState().openLayoutContextMenu('character', character.id, native.clientX, native.clientY)
+      } else {
+        onRightClick(character.id, native.clientX, native.clientY)
+      }
+    },
+    [isLayout, character.id, onRightClick]
+  )
+
+  const onResizeCharacter = useCallback(
+    (newW: number, newH: number) => {
+      window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, character.id, {
+        footprint: { w: newW, h: newH },
+      })
+    },
+    [character.id]
+  )
+
+  return (
+    <Container
+      ref={containerRef}
+      x={x}
+      y={y}
+      zIndex={character.gridPosition.y * cellSize + (character.zOrder ?? 0) * 100}
+      interactive
+      pointerdown={onPointerDown}
+      onglobalpointermove={isLayout ? onPointerMove : undefined}
+      pointerup={isLayout ? onPointerUp : undefined}
+      pointerupoutside={isLayout ? onPointerUp : undefined}
+      rightclick={onRightClickHandler}
+      cursor={isLayout ? 'grab' : 'default'}
+      pointerover={isLayout ? () => { if (!useUIStore.getState().isDraggingItem) setIsHoveredChar(true) } : undefined}
+      pointerout={isLayout ? () => { if (!isResizingChar.current) setIsHoveredChar(false) } : undefined}
+    >
+      {texture ? (
+        <Container>
+          <Sprite texture={texture} width={w} height={h} />
+          <Graphics draw={drawBorderGlow} />
+        </Container>
+      ) : (
+        statusEffect
+      )}
+      <Text
+        text={character.name}
+        x={w / 2}
+        y={h + 4}
+        anchor={{ x: 0.5, y: 0 }}
+        style={labelStyle}
+      />
+      {showHandlesChar && (
+        <>
+          <SelectionBorder w={w} h={h} />
+          <ResizeHandle
+            parentW={w}
+            parentH={h}
+            cellSize={cellSize}
+            itemPixelX={character.gridPosition.x * cellSize}
+            itemPixelY={character.gridPosition.y * cellSize}
+            onResize={onResizeCharacter}
+            onDragStateChange={(d) => { isResizingChar.current = d }}
+          />
+          <ZOrderControls
+            parentW={w}
+            parentH={h}
+            onUp={() => window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, character.id, { zOrder: (character.zOrder ?? 0) + 1 })}
+            onDown={() => window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, character.id, { zOrder: (character.zOrder ?? 0) - 1 })}
+          />
+        </>
+      )}
+    </Container>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// OfficeCanvas
+// ---------------------------------------------------------------------------
+
+export function OfficeCanvas(): ReactElement {
+  const { width: winW, height: winH } = useWindowSize()
+  const cellW = Math.floor(winW / GRID_COLS)
+  const cellH = Math.floor(winH / GRID_ROWS)
+  const cellSize = Math.min(cellW, cellH)
+  const stageW = cellSize * GRID_COLS
+  const stageH = cellSize * GRID_ROWS
+
+  const characters = useCharacterStore((s) => s.characters)
+  const selectCharacter = useUIStore((s) => s.selectCharacter)
+  const openContextMenu = useUIStore((s) => s.openContextMenu)
+  const activeTab = useUIStore((s) => s.activeTab)
+  const theme = useUIStore((s) => s.theme)
+  const selectedLayoutItem = useUIStore((s) => s.selectedLayoutItem)
+  const selectLayoutItem = useUIStore((s) => s.selectLayoutItem)
+  const items = useRoomStore((s) => s.layout.items)
+
+  // ESC to deselect / close context menu, Ctrl+C / Ctrl+V copy-paste
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        useUIStore.getState().selectLayoutItem(null)
+        useUIStore.getState().closeLayoutContextMenu()
+      }
+      const isCmd = e.ctrlKey || e.metaKey
+      if (isCmd && e.key === 'c') {
+        const sel = useUIStore.getState().selectedLayoutItem
+        if (!sel) return
+        if (sel.type === 'furniture') {
+          const item = useRoomStore.getState().layout.items.find((i) => i.id === sel.id)
+          if (item) {
+            useUIStore.getState().setLayoutClipboard({
+              type: 'furniture',
+              manifestId: item.manifestId,
+              footprint: { w: item.footprint.w, h: item.footprint.h },
+            })
+          }
+        } else {
+          const char = useCharacterStore.getState().characters.find((c) => c.id === sel.id)
+          if (char) {
+            useUIStore.getState().setLayoutClipboard({
+              type: 'character',
+              id: char.id,
+              name: char.name,
+            })
+          }
+        }
+      }
+      if (isCmd && e.key === 'v') {
+        const clip = useUIStore.getState().layoutClipboard
+        if (!clip || clip.type !== 'furniture') return
+        const newId = crypto.randomUUID()
+        const pos = useRoomStore.getState().findEmptyPosition(clip.footprint.w, clip.footprint.h)
+        useRoomStore.getState().addItem({
+          id: newId,
+          manifestId: clip.manifestId,
+          position: pos ?? { x: 0, y: 0 },
+          footprint: { w: clip.footprint.w, h: clip.footprint.h },
+        })
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  const palette = useMemo(
+    () => (getEffectiveMode(theme) === 'dark' ? DARK_PALETTE : LIGHT_PALETTE),
+    [theme]
+  )
+
+  const floorDecorItems = useMemo(
+    () =>
+      items
+        .map((item) => ({ item, manifest: getManifestById(item.manifestId) }))
+        .filter(
+          (entry): entry is { item: PlacedItem; manifest: ItemManifest } =>
+            entry.manifest !== undefined && entry.manifest.category === 'tile'
+        ),
+    [items]
+  )
+
+  const furnitureItems = useMemo(
+    () =>
+      items
+        .map((item) => ({ item, manifest: getManifestById(item.manifestId) }))
+        .filter(
+          (entry): entry is { item: PlacedItem; manifest: ItemManifest } =>
+            entry.manifest !== undefined && entry.manifest.category === 'furniture'
+        ),
+    [items]
+  )
+
+  // Deselect when clicking empty canvas area
+  const onCanvasPointerDown = useCallback(() => {
+    selectLayoutItem(null)
+  }, [selectLayoutItem])
+
+  return (
+    <Stage
+      width={stageW}
+      height={stageH}
+      options={{ background: palette.canvasBg, antialias: false }}
+    >
+      <Container interactive pointerdown={activeTab === 'layout' ? onCanvasPointerDown : undefined}>
+        {/* Layer 0: Background */}
+        <Container name="backgroundLayer">
+          <BackgroundLayer cellSize={cellSize} palette={palette} />
+        </Container>
+
+        {/* Layer 1: Floor decor */}
+        <Container name="floorDecorLayer">
+          {floorDecorItems.map(({ item, manifest }) => (
+            <FurnitureSprite
+              key={item.id}
+              item={item}
+              cellSize={cellSize}
+              manifest={manifest}
+              activeTab={activeTab}
+              isSelected={selectedLayoutItem?.type === 'furniture' && selectedLayoutItem.id === item.id}
+            />
+          ))}
+        </Container>
+
+        {/* Layers 2-4: Y-sorted furniture + characters */}
+        <Container name="ySortContainer" sortableChildren>
+          {furnitureItems.map(({ item, manifest }) => (
+            <FurnitureSprite
+              key={item.id}
+              item={item}
+              cellSize={cellSize}
+              manifest={manifest}
+              zIndex={item.position.y * cellSize + (item.zOrder ?? 0) * 100}
+              activeTab={activeTab}
+              isSelected={selectedLayoutItem?.type === 'furniture' && selectedLayoutItem.id === item.id}
+            />
+          ))}
+          {characters.map((char) => (
+            <CharacterSprite
+              key={char.id}
+              character={char}
+              cellSize={cellSize}
+              onSelect={selectCharacter}
+              onRightClick={openContextMenu}
+              activeTab={activeTab}
+              isSelected={selectedLayoutItem?.type === 'character' && selectedLayoutItem.id === char.id}
+            />
+          ))}
+        </Container>
+      </Container>
+    </Stage>
+  )
+}

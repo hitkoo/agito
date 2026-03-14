@@ -1,0 +1,24 @@
+appId: com.agito.app
+productName: Agito
+directories:
+  buildResources: build
+  output: dist
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.*'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+mac:
+  target:
+    - dmg
+    - zip
+  artifactName: ${name}-${version}-${os}-${arch}.${ext}
+linux:
+  target:
+    - AppImage
+    - deb
+  artifactName: ${name}-${version}-${os}-${arch}.${ext}
+win:
+  target:
+    - nsis
+  artifactName: ${name}-${version}-${os}-${arch}.${ext}
