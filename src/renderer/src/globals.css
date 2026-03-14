@@ -28,26 +28,26 @@
   }
 
   .dark {
-    /* DARK theme (current values moved here) */
-    --background: 222 47% 11%;
-    --foreground: 210 20% 88%;
-    --card: 222 47% 11%;
-    --card-foreground: 210 20% 88%;
-    --popover: 224 50% 14%;
-    --popover-foreground: 210 20% 88%;
-    --primary: 217 70% 22%;
-    --primary-foreground: 210 20% 88%;
-    --secondary: 222 40% 18%;
-    --secondary-foreground: 210 20% 88%;
-    --muted: 222 40% 18%;
-    --muted-foreground: 215 15% 55%;
-    --accent: 222 40% 18%;
-    --accent-foreground: 210 20% 88%;
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 210 20% 88%;
-    --border: 222 30% 25%;
-    --input: 222 30% 25%;
-    --ring: 217 70% 35%;
+    /* DARK theme — neutral gray from agito-legacy (oklch 0.2 0.005 270) */
+    --background: 270 4% 19%;
+    --foreground: 270 3% 92%;
+    --card: 270 4% 19%;
+    --card-foreground: 270 3% 92%;
+    --popover: 270 5% 16%;
+    --popover-foreground: 270 3% 92%;
+    --primary: 270 30% 40%;
+    --primary-foreground: 270 3% 92%;
+    --secondary: 270 4% 24%;
+    --secondary-foreground: 270 3% 92%;
+    --muted: 270 4% 24%;
+    --muted-foreground: 270 3% 55%;
+    --accent: 270 4% 24%;
+    --accent-foreground: 270 3% 92%;
+    --destructive: 0 60% 40%;
+    --destructive-foreground: 270 3% 92%;
+    --border: 270 4% 28%;
+    --input: 270 4% 28%;
+    --ring: 270 20% 45%;
     --radius: 0.5rem;
   }
 

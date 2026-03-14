@@ -41,7 +41,7 @@ export class AgitoStore {
       this.writeJSON(CHARACTERS_FILE, [])
     }
     if (!existsSync(this.filePath(ROOM_LAYOUT_FILE))) {
-      this.writeJSON(ROOM_LAYOUT_FILE, { background: '', items: [] })
+      this.writeJSON(ROOM_LAYOUT_FILE, { background: '', items: [], gridCols: 40, gridRows: 24 })
     }
     if (!existsSync(this.filePath(SESSIONS_FILE))) {
       this.writeJSON(SESSIONS_FILE, [])

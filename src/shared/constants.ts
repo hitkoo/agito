@@ -1,7 +1,10 @@
 // World grid
 export const GRID_COLS = 40
 export const GRID_ROWS = 24
-export const WALL_ROWS = 3
+export const MIN_GRID_COLS = 20
+export const MIN_GRID_ROWS = 12
+export const MAX_GRID_COLS = 120
+export const MAX_GRID_ROWS = 80
 
 // Session history limit
 export const MAX_SESSION_HISTORY = 10

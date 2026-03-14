@@ -6,7 +6,7 @@ import type { Character, EngineType, RoomLayout, SessionMapping } from '../share
 import type { AgitoStore } from './store'
 import { PtyPool } from './pty-pool'
 import { StatusDetector } from './status-detector'
-import { GRID_COLS, GRID_ROWS, WALL_ROWS, FOOTPRINTS, MAX_SESSION_HISTORY, ASSETS_DIR } from '../shared/constants'
+import { GRID_COLS, GRID_ROWS, FOOTPRINTS, MAX_SESSION_HISTORY, ASSETS_DIR } from '../shared/constants'
 import type { EngineAdapter } from './engine/types'
 import { claudeCodeAdapter } from './engine/claude-code'
 import { codexAdapter } from './engine/codex'
@@ -485,7 +485,7 @@ function findEmptyPosition(characters: Character[]): { x: number; y: number } {
   const fw = FOOTPRINTS.character.w
   const fh = FOOTPRINTS.character.h
 
-  for (let y = WALL_ROWS; y <= GRID_ROWS - fh; y++) {
+  for (let y = 0; y <= GRID_ROWS - fh; y++) {
     for (let x = 0; x <= GRID_COLS - fw; x++) {
       const occupied = characters.some((c) => {
         const cx = c.gridPosition.x

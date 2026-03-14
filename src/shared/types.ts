@@ -65,6 +65,8 @@ export interface PlacedItem {
 export interface RoomLayout {
   background: string // path to background texture
   items: PlacedItem[]
+  gridCols: number
+  gridRows: number
 }
 
 // --- Session ---

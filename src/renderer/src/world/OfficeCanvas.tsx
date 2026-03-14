@@ -5,7 +5,6 @@ import { loadTexture } from './AssetLoader'
 import { useCharacterStore } from '../stores/character-store'
 import { useUIStore, type AppTab, type ThemeMode } from '../stores/ui-store'
 import { useRoomStore } from '../stores/room-store'
-import { GRID_COLS, GRID_ROWS, WALL_ROWS } from '../../../shared/constants'
 import type {
   Character,
   CharacterStatus,
@@ -30,11 +29,11 @@ interface ColorPalette {
 }
 
 const DARK_PALETTE: ColorPalette = {
-  canvasBg: 0x1a1a2e,
-  wall: 0x141430,
-  floorA: 0x1e1e3a,
-  floorB: 0x1c1c36,
-  grid: 0x2a2a4a,
+  canvasBg: 0x302f33,
+  wall: 0x272629,
+  floorA: 0x363539,
+  floorB: 0x333236,
+  grid: 0x454449,
 }
 
 const LIGHT_PALETTE: ColorPalette = {
@@ -123,45 +122,40 @@ function useWindowSize(): { width: number; height: number } {
 function BackgroundLayer({
   cellSize,
   palette,
+  activeTab,
+  gridCols,
+  gridRows,
 }: {
   cellSize: number
   palette: ColorPalette
+  activeTab: AppTab
+  gridCols: number
+  gridRows: number
 }): ReactElement {
-  const drawFloor = useCallback(
+  const draw = useCallback(
     (g: PixiGraphics) => {
       g.clear()
 
-      // Wall area — top WALL_ROWS rows
-      g.beginFill(palette.wall, 1)
-      g.drawRect(0, 0, GRID_COLS * cellSize, WALL_ROWS * cellSize)
-      g.endFill()
-
-      // Floor tiles — alternating checkerboard below wall
-      for (let row = WALL_ROWS; row < GRID_ROWS; row++) {
-        for (let col = 0; col < GRID_COLS; col++) {
-          const isEven = (row + col) % 2 === 0
-          const color = isEven ? palette.floorA : palette.floorB
-          g.beginFill(color, 1)
-          g.drawRect(col * cellSize, row * cellSize, cellSize, cellSize)
-          g.endFill()
-        }
+      if (activeTab === 'runtime') {
+        // Runtime mode: solid background only — no grid lines
+        return
       }
 
-      // Grid overlay — faint lines
+      // Layout mode: faint grid lines for placement guide
       g.lineStyle(1, palette.grid, 0.15)
-      for (let x = 0; x <= GRID_COLS; x++) {
+      for (let x = 0; x <= gridCols; x++) {
         g.moveTo(x * cellSize, 0)
-        g.lineTo(x * cellSize, GRID_ROWS * cellSize)
+        g.lineTo(x * cellSize, gridRows * cellSize)
       }
-      for (let y = 0; y <= GRID_ROWS; y++) {
+      for (let y = 0; y <= gridRows; y++) {
         g.moveTo(0, y * cellSize)
-        g.lineTo(GRID_COLS * cellSize, y * cellSize)
+        g.lineTo(gridCols * cellSize, y * cellSize)
       }
     },
-    [cellSize, palette]
+    [cellSize, palette, activeTab, gridCols, gridRows]
   )
 
-  return <Graphics draw={drawFloor} />
+  return <Graphics draw={draw} />
 }
 
 // ---------------------------------------------------------------------------
@@ -514,10 +508,11 @@ function ResizeHandle({
   const onGlobalPointerMove = useCallback(
     (e: import('pixi.js').FederatedPointerEvent) => {
       if (!dragging.current) return
+      const { gridCols, gridRows } = useRoomStore.getState()
       const newGridW = Math.max(1, Math.round((e.global.x - itemPixelX) / cellSize))
       const newGridH = Math.max(1, Math.round((e.global.y - itemPixelY) / cellSize))
-      const clampedW = Math.min(newGridW, GRID_COLS - Math.round(itemPixelX / cellSize))
-      const clampedH = Math.min(newGridH, GRID_ROWS - Math.round(itemPixelY / cellSize))
+      const clampedW = Math.min(newGridW, gridCols - Math.round(itemPixelX / cellSize))
+      const clampedH = Math.min(newGridH, gridRows - Math.round(itemPixelY / cellSize))
       onResize(Math.max(1, clampedW), Math.max(1, clampedH))
     },
     [cellSize, itemPixelX, itemPixelY, onResize]
@@ -729,6 +724,7 @@ function FurnitureSprite({
   const onPointerMove = useCallback(
     (e: import('pixi.js').FederatedPointerEvent) => {
       if (!dragging.current || !containerRef.current) return
+      const { gridCols, gridRows } = useRoomStore.getState()
       const globalPos = e.global
       const dx = globalPos.x - dragStart.current.x
       const dy = globalPos.y - dragStart.current.y
@@ -737,8 +733,8 @@ function FurnitureSprite({
       hasMoved.current = true
       const newPixelX = originalPos.current.x * cellSize + dx
       const newPixelY = originalPos.current.y * cellSize + dy
-      const gridX = Math.max(0, Math.min(GRID_COLS - item.footprint.w, Math.round(newPixelX / cellSize)))
-      const gridY = Math.max(0, Math.min(GRID_ROWS - item.footprint.h, Math.round(newPixelY / cellSize)))
+      const gridX = Math.max(0, Math.min(gridCols - item.footprint.w, Math.round(newPixelX / cellSize)))
+      const gridY = Math.max(0, Math.min(gridRows - item.footprint.h, Math.round(newPixelY / cellSize)))
       containerRef.current.x = gridX * cellSize
       containerRef.current.y = gridY * cellSize
     },
@@ -943,6 +939,7 @@ function CharacterSprite({
   const onPointerMove = useCallback(
     (e: import('pixi.js').FederatedPointerEvent) => {
       if (!dragging.current || !containerRef.current) return
+      const { gridCols, gridRows } = useRoomStore.getState()
       const dx = e.global.x - dragStart.current.x
       const dy = e.global.y - dragStart.current.y
       if (!hasMoved.current && Math.abs(dx) < 5 && Math.abs(dy) < 5) return
@@ -950,8 +947,8 @@ function CharacterSprite({
       hasMoved.current = true
       const newPixelX = originalPos.current.x * cellSize + dx
       const newPixelY = originalPos.current.y * cellSize + dy
-      const gridX = Math.max(0, Math.min(GRID_COLS - fp.w, Math.round(newPixelX / cellSize)))
-      const gridY = Math.max(0, Math.min(GRID_ROWS - fp.h, Math.round(newPixelY / cellSize)))
+      const gridX = Math.max(0, Math.min(gridCols - fp.w, Math.round(newPixelX / cellSize)))
+      const gridY = Math.max(0, Math.min(gridRows - fp.h, Math.round(newPixelY / cellSize)))
       containerRef.current.x = gridX * cellSize
       containerRef.current.y = gridY * cellSize
     },
@@ -1069,11 +1066,13 @@ function CharacterSprite({
 
 export function OfficeCanvas(): ReactElement {
   const { width: winW, height: winH } = useWindowSize()
-  const cellW = Math.floor(winW / GRID_COLS)
-  const cellH = Math.floor(winH / GRID_ROWS)
+  const gridCols = useRoomStore((s) => s.gridCols)
+  const gridRows = useRoomStore((s) => s.gridRows)
+  const cellW = Math.floor(winW / gridCols)
+  const cellH = Math.floor(winH / gridRows)
   const cellSize = Math.min(cellW, cellH)
-  const stageW = cellSize * GRID_COLS
-  const stageH = cellSize * GRID_ROWS
+  const stageW = cellSize * gridCols
+  const stageH = cellSize * gridRows
 
   const characters = useCharacterStore((s) => s.characters)
   const selectCharacter = useUIStore((s) => s.selectCharacter)
@@ -1197,7 +1196,7 @@ export function OfficeCanvas(): ReactElement {
       <Container interactive pointerdown={activeTab === 'layout' ? onCanvasPointerDown : undefined}>
         {/* Layer 0: Background */}
         <Container name="backgroundLayer">
-          <BackgroundLayer cellSize={cellSize} palette={palette} />
+          <BackgroundLayer cellSize={cellSize} palette={palette} activeTab={activeTab} gridCols={gridCols} gridRows={gridRows} />
         </Container>
 
         {/* Layer 1: Floor decor */}

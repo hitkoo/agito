@@ -97,25 +97,36 @@ export function ItemPalette(): JSX.Element {
   // Load all sprites from the asset folder scan
   const loadSprites = useCallback(async () => {
     setLoading(true)
-    const entries = await window.api.invoke<SpriteEntry[]>(IPC_COMMANDS.SPRITE_LIST)
-    setAllSprites(entries)
+    try {
+      const entries = await window.api.invoke<SpriteEntry[]>(IPC_COMMANDS.SPRITE_LIST)
+      setAllSprites(entries ?? [])
+      setLoading(false)
 
-    // Batch-load data URLs for thumbnails
-    const urlMap = new Map<string, string>()
-    for (let i = 0; i < entries.length; i += 20) {
-      const batch = entries.slice(i, i + 20)
-      const results = await Promise.all(
-        batch.map(async (entry) => {
-          const data = await window.api.invoke<string | null>(IPC_COMMANDS.SPRITE_READ_BASE64, entry.relativePath)
-          return { key: entry.relativePath, data }
-        })
-      )
-      for (const r of results) {
-        if (r.data) urlMap.set(r.key, r.data)
+      // Load thumbnails in background (non-blocking)
+      if (entries && entries.length > 0) {
+        const urlMap = new Map<string, string>()
+        for (let i = 0; i < entries.length; i += 20) {
+          const batch = entries.slice(i, i + 20)
+          const results = await Promise.all(
+            batch.map(async (entry) => {
+              try {
+                const data = await window.api.invoke<string | null>(IPC_COMMANDS.SPRITE_READ_BASE64, entry.relativePath)
+                return { key: entry.relativePath, data }
+              } catch {
+                return { key: entry.relativePath, data: null }
+              }
+            })
+          )
+          for (const r of results) {
+            if (r.data) urlMap.set(r.key, r.data)
+          }
+          // Update progressively so cards appear as thumbnails load
+          setSpriteDataUrls(new Map(urlMap))
+        }
       }
+    } catch {
+      setLoading(false)
     }
-    setSpriteDataUrls(urlMap)
-    setLoading(false)
   }, [])
 
   useEffect(() => {

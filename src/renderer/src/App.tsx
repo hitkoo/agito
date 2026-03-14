@@ -12,7 +12,6 @@ import { Sidebar } from './components/Sidebar'
 import { ItemPalette } from './components/ItemPalette'
 import { LayoutContextMenu } from './components/LayoutContextMenu'
 import { SettingsPanel } from './components/SettingsPanel'
-import { GRID_COLS, GRID_ROWS } from '../../shared/constants'
 
 export default function App(): JSX.Element {
   const selectedCharacterId = useUIStore((s) => s.selectedCharacterId)
@@ -72,23 +71,24 @@ export default function App(): JSX.Element {
       // Default footprints: office pack = 2x3, custom = 2x2
       const footprint = theme === 'office' ? { w: 2, h: 3 } : { w: 2, h: 2 }
 
+      const { gridCols, gridRows } = useRoomStore.getState()
       const rect = e.currentTarget.getBoundingClientRect()
       const cellSize = Math.min(
-        Math.floor(rect.width / GRID_COLS),
-        Math.floor(rect.height / GRID_ROWS)
+        Math.floor(rect.width / gridCols),
+        Math.floor(rect.height / gridRows)
       )
 
       const gridX = Math.max(
         0,
         Math.min(
-          GRID_COLS - footprint.w,
+          gridCols - footprint.w,
           Math.floor((e.clientX - rect.left) / cellSize)
         )
       )
       const gridY = Math.max(
         0,
         Math.min(
-          GRID_ROWS - footprint.h,
+          gridRows - footprint.h,
           Math.floor((e.clientY - rect.top) / cellSize)
         )
       )

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { RoomLayout, PlacedItem, GridPosition, AgitoPersistentData, ItemFootprint } from '../../../shared/types'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
-import { GRID_COLS, GRID_ROWS } from '../../../shared/constants'
+import { GRID_COLS, GRID_ROWS, MIN_GRID_COLS, MIN_GRID_ROWS, MAX_GRID_COLS, MAX_GRID_ROWS } from '../../../shared/constants'
 
 function cellKey(x: number, y: number): string {
   return `${x},${y}`
@@ -21,9 +21,12 @@ function buildOccupiedSet(items: PlacedItem[]): Set<string> {
 
 interface RoomStore {
   layout: RoomLayout
+  gridCols: number
+  gridRows: number
   occupiedCells: Set<string>
   loadFromMain: () => Promise<void>
   setLayout: (layout: RoomLayout) => void
+  setGridSize: (cols: number, rows: number) => void
   addItem: (item: PlacedItem) => void
   removeItem: (itemId: string) => void
   moveItem: (itemId: string, newPosition: GridPosition) => void
@@ -33,19 +36,33 @@ interface RoomStore {
 }
 
 export const useRoomStore = create<RoomStore>((set, get) => ({
-  layout: { background: '', items: [] },
+  layout: { background: '', items: [], gridCols: GRID_COLS, gridRows: GRID_ROWS },
+  gridCols: GRID_COLS,
+  gridRows: GRID_ROWS,
   occupiedCells: new Set<string>(),
 
   loadFromMain: async () => {
     const data = await window.api.invoke<AgitoPersistentData>(IPC_COMMANDS.STORE_READ)
+    const cols = data.roomLayout.gridCols ?? GRID_COLS
+    const rows = data.roomLayout.gridRows ?? GRID_ROWS
     set({
-      layout: data.roomLayout,
+      layout: { ...data.roomLayout, gridCols: cols, gridRows: rows },
+      gridCols: cols,
+      gridRows: rows,
       occupiedCells: buildOccupiedSet(data.roomLayout.items),
     })
   },
 
   setLayout: (layout) =>
     set({ layout, occupiedCells: buildOccupiedSet(layout.items) }),
+
+  setGridSize: (cols, rows) => {
+    const clampedCols = Math.max(MIN_GRID_COLS, Math.min(MAX_GRID_COLS, cols))
+    const clampedRows = Math.max(MIN_GRID_ROWS, Math.min(MAX_GRID_ROWS, rows))
+    const updated = { ...get().layout, gridCols: clampedCols, gridRows: clampedRows }
+    set({ layout: updated, gridCols: clampedCols, gridRows: clampedRows })
+    window.api.invoke(IPC_COMMANDS.STORE_WRITE, 'roomLayout', updated)
+  },
 
   addItem: (item) => {
     const updated = { ...get().layout, items: [...get().layout.items, item] }
@@ -97,8 +114,10 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
 
   findEmptyPosition: (width, height) => {
     const occupied = get().occupiedCells
-    for (let y = 0; y <= GRID_ROWS - height; y++) {
-      for (let x = 0; x <= GRID_COLS - width; x++) {
+    const cols = get().gridCols
+    const rows = get().gridRows
+    for (let y = 0; y <= rows - height; y++) {
+      for (let x = 0; x <= cols - width; x++) {
         let fits = true
         for (let dy = 0; dy < height && fits; dy++) {
           for (let dx = 0; dx < width && fits; dx++) {

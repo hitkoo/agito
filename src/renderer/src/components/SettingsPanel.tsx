@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
-import { AGITO_DIR_NAME } from '../../../shared/constants'
+import { AGITO_DIR_NAME, MIN_GRID_COLS, MAX_GRID_COLS, MIN_GRID_ROWS, MAX_GRID_ROWS } from '../../../shared/constants'
 import { Label } from './ui/label'
 import { useUIStore, type ThemeMode } from '../stores/ui-store'
+import { useRoomStore } from '../stores/room-store'
 
 interface EngineDetectResult {
   found: boolean
@@ -25,6 +26,8 @@ const ENGINE_DISPLAY: Record<string, string> = {
 export function SettingsPanel(): JSX.Element {
   const theme = useUIStore((s) => s.theme)
   const setTheme = useUIStore((s) => s.setTheme)
+  const gridCols = useRoomStore((s) => s.gridCols)
+  const gridRows = useRoomStore((s) => s.gridRows)
 
   const [engines, setEngines] = useState<EngineStatus[]>([
     { name: 'Claude Code', key: 'claude-code', result: null, loading: true },
@@ -131,6 +134,44 @@ export function SettingsPanel(): JSX.Element {
               </label>
             ))}
           </div>
+        </section>
+
+        {/* Grid Size */}
+        <section className="space-y-2">
+          <Label className="text-base font-semibold">Grid Size</Label>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Width</span>
+              <input
+                type="number"
+                min={MIN_GRID_COLS}
+                max={MAX_GRID_COLS}
+                value={gridCols}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10)
+                  if (!isNaN(val)) useRoomStore.getState().setGridSize(val, gridRows)
+                }}
+                className="w-20 rounded-md border border-border bg-muted/30 px-2 py-1 text-sm"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Height</span>
+              <input
+                type="number"
+                min={MIN_GRID_ROWS}
+                max={MAX_GRID_ROWS}
+                value={gridRows}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10)
+                  if (!isNaN(val)) useRoomStore.getState().setGridSize(gridCols, val)
+                }}
+                className="w-20 rounded-md border border-border bg-muted/30 px-2 py-1 text-sm"
+              />
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Min {MIN_GRID_COLS}x{MIN_GRID_ROWS}, Max {MAX_GRID_COLS}x{MAX_GRID_ROWS}
+          </p>
         </section>
       </div>
     </div>
