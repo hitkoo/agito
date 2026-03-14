@@ -412,6 +412,64 @@ export function registerIPCHandlers(store: AgitoStore): void {
     const data = readFileSync(filePath)
     return `data:image/${mime};base64,${data.toString('base64')}`
   })
+
+  // --- Auto-resume stale sessions on startup ---
+  // Characters with currentSessionId but no running PTY need to be resumed
+  const startupCharacters = store.getCharacters()
+  const sessions = store.getSessions()
+  for (const char of startupCharacters) {
+    if (char.currentSessionId && !ptyPool.isAlive(char.id)) {
+      const session = sessions.find((s) => s.sessionId === char.currentSessionId)
+      if (!session) {
+        // Session mapping not found — reset to idle
+        store.saveCharacters(
+          store.getCharacters().map((c) =>
+            c.id === char.id ? { ...c, currentSessionId: null, status: 'idle' as const } : c
+          )
+        )
+        continue
+      }
+
+      const adapter = getEngineAdapter(char.engine)
+      let soulContent: string | undefined
+      if (char.soul) {
+        try {
+          soulContent = readFileSync(join(store.getBasePath(), char.soul), 'utf-8')
+        } catch { /* ignore */ }
+      }
+
+      const spawnArgs = adapter.buildSpawnArgs({
+        sessionId: char.currentSessionId,
+        soulPath: soulContent,
+        workingDirectory: session.workingDirectory,
+      })
+
+      const pty = ptyPool.spawn(char.id, adapter.cliCommand, spawnArgs, session.workingDirectory)
+
+      pty.onData((ptyData) => {
+        broadcastToAll(IPC_EVENTS.PTY_DATA, { characterId: char.id, data: ptyData })
+        statusDetector.feedData(char.id, ptyData)
+      })
+
+      statusDetector.attach(char.id, (status) => {
+        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, { characterId: char.id, status })
+      })
+
+      pty.onExit(({ exitCode }) => {
+        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
+          characterId: char.id,
+          status: exitCode === 0 ? 'done' : 'error',
+        })
+      })
+
+      // Update status to idle initially — statusDetector will set 'working' when data flows
+      store.saveCharacters(
+        store.getCharacters().map((c) =>
+          c.id === char.id ? { ...c, status: 'idle' as const } : c
+        )
+      )
+    }
+  }
 }
 
 function getEngineAdapter(engineType: EngineType): EngineAdapter {
