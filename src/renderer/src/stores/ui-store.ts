@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type AppTab = 'runtime' | 'layout' | 'settings'
+export type AppTab = 'runtime' | 'characters' | 'layout' | 'settings'
 export type ThemeMode = 'system' | 'light' | 'dark'
 
 interface ContextMenuState {

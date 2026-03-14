@@ -7,7 +7,15 @@ interface SpriteLibraryProps {
   currentSprite?: string
 }
 
+interface SpriteListEntry {
+  theme: string
+  category: string
+  filename: string
+  relativePath: string
+}
+
 interface SpriteEntry {
+  relativePath: string
   filename: string
   dataUrl: string | null
 }
@@ -19,17 +27,19 @@ export function SpriteLibrary({ onSelect, currentSprite }: SpriteLibraryProps): 
   const loadSprites = async (): Promise<void> => {
     setLoading(true)
     try {
-      const files = await window.api.invoke<string[]>(IPC_COMMANDS.SPRITE_LIST)
-      const entries: SpriteEntry[] = await Promise.all(
-        files.map(async (filename) => {
+      const entries = await window.api.invoke<SpriteListEntry[]>(IPC_COMMANDS.SPRITE_LIST)
+      // Filter to character sprites for the sprite library (used in character editing)
+      const characterEntries = entries.filter((e) => e.category === 'character')
+      const spriteEntries: SpriteEntry[] = await Promise.all(
+        characterEntries.map(async (entry) => {
           const dataUrl = await window.api.invoke<string | null>(
             IPC_COMMANDS.SPRITE_READ_BASE64,
-            filename
+            entry.relativePath
           )
-          return { filename, dataUrl }
+          return { relativePath: entry.relativePath, filename: entry.filename, dataUrl }
         })
       )
-      setSprites(entries)
+      setSprites(spriteEntries)
     } finally {
       setLoading(false)
     }
@@ -40,15 +50,17 @@ export function SpriteLibrary({ onSelect, currentSprite }: SpriteLibraryProps): 
   }, [])
 
   const handleUpload = async (): Promise<void> => {
-    const filename = await window.api.invoke<string | null>(IPC_COMMANDS.SPRITE_UPLOAD)
-    if (filename) {
+    const relativePath = await window.api.invoke<string | null>(IPC_COMMANDS.SPRITE_UPLOAD, 'character')
+    if (relativePath) {
       await loadSprites()
-      onSelect(`sprites/${filename}`)
+      onSelect(`assets/${relativePath}`)
     }
   }
 
-  // Extract current filename from sprite path for comparison
-  const currentFilename = currentSprite?.split('/').pop() ?? ''
+  // Extract current relativePath from sprite path for comparison
+  const currentRelPath = currentSprite?.startsWith('assets/')
+    ? currentSprite.slice(7)
+    : currentSprite ?? ''
 
   return (
     <div className="flex flex-col gap-2">
@@ -67,14 +79,14 @@ export function SpriteLibrary({ onSelect, currentSprite }: SpriteLibraryProps): 
         <div className="grid grid-cols-4 gap-2 max-h-[300px] overflow-y-auto pr-1">
           {sprites.map((entry) => (
             <button
-              key={entry.filename}
+              key={entry.relativePath}
               type="button"
               className={`flex h-16 w-16 items-center justify-center overflow-hidden rounded-md border-2 bg-muted ${
-                entry.filename === currentFilename
+                entry.relativePath === currentRelPath
                   ? 'border-primary'
                   : 'border-transparent hover:border-muted-foreground/40'
               }`}
-              onClick={() => onSelect(`sprites/${entry.filename}`)}
+              onClick={() => onSelect(`assets/${entry.relativePath}`)}
               title={entry.filename}
             >
               {entry.dataUrl ? (

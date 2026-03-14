@@ -9,8 +9,8 @@ export async function loadTexture(path: string): Promise<Texture | null> {
   if (textureCache.has(path)) return textureCache.get(path)!
 
   try {
-    // Strip "sprites/" prefix if present, keep subdirectory structure (e.g. "office/file.png")
-    const relPath = path.startsWith('sprites/') ? path.slice(8) : path
+    // Strip "assets/" prefix if present to get path relative to ~/.agito/assets/
+    const relPath = path.startsWith('assets/') ? path.slice(7) : path
     if (!relPath) return null
 
     // Load as base64 data URL via IPC (bypasses file:// security restriction)

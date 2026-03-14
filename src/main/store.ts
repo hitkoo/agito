@@ -7,7 +7,7 @@ import {
   ROOM_LAYOUT_FILE,
   SESSIONS_FILE,
   SOULS_DIR,
-  SPRITES_DIR,
+  ASSETS_DIR,
 } from '../shared/constants'
 import type {
   Character,
@@ -27,7 +27,9 @@ export class AgitoStore {
     const dirs = [
       this.basePath,
       join(this.basePath, SOULS_DIR),
-      join(this.basePath, SPRITES_DIR),
+      join(this.basePath, ASSETS_DIR, 'custom', 'character'),
+      join(this.basePath, ASSETS_DIR, 'custom', 'furniture'),
+      join(this.basePath, ASSETS_DIR, 'custom', 'tile'),
     ]
     for (const dir of dirs) {
       if (!existsSync(dir)) {

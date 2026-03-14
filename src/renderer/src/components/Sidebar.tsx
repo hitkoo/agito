@@ -1,10 +1,11 @@
-import { Zap, LayoutGrid, Settings, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Zap, Users, LayoutGrid, Settings, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useUIStore, type AppTab } from '../stores/ui-store'
 import { Button } from './ui/button'
 import { cn } from '../lib/utils'
 
 const tabs: { id: AppTab; icon: typeof Zap; label: string }[] = [
   { id: 'runtime', icon: Zap, label: 'Runtime' },
+  { id: 'characters', icon: Users, label: 'Characters' },
   { id: 'layout', icon: LayoutGrid, label: 'Layout' },
   { id: 'settings', icon: Settings, label: 'Settings' },
 ]

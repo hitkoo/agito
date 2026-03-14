@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useCallback } from 'react'
 import { useCharacterStore } from './stores/character-store'
 import { useRoomStore } from './stores/room-store'
 import { useUIStore } from './stores/ui-store'
@@ -6,16 +6,13 @@ import { useIPCSync } from './hooks/useIPC'
 import { useTheme, getPersistedTheme } from './hooks/useTheme'
 import { OfficeCanvas } from './world/OfficeCanvas'
 import { CharacterPanel } from './panel/CharacterPanel'
-import { CreateCharacterDialog } from './components/CreateCharacterDialog'
 import { CharacterContextMenu } from './components/CharacterContextMenu'
+import { CharactersPanel } from './components/CharactersPanel'
 import { Sidebar } from './components/Sidebar'
 import { ItemPalette } from './components/ItemPalette'
 import { LayoutContextMenu } from './components/LayoutContextMenu'
 import { SettingsPanel } from './components/SettingsPanel'
-import { getManifestById, loadCustomManifests } from '../../shared/item-manifests'
-import type { ItemManifest } from '../../shared/types'
 import { GRID_COLS, GRID_ROWS } from '../../shared/constants'
-import { IPC_COMMANDS } from '../../shared/ipc-channels'
 
 export default function App(): JSX.Element {
   const selectedCharacterId = useUIStore((s) => s.selectedCharacterId)
@@ -24,7 +21,6 @@ export default function App(): JSX.Element {
   const setTheme = useUIStore((s) => s.setTheme)
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
   const loadRoom = useRoomStore((s) => s.loadFromMain)
-  const [showCreateDialog, setShowCreateDialog] = useState(false)
 
   useIPCSync()
   useTheme()
@@ -34,12 +30,8 @@ export default function App(): JSX.Element {
   }, [])
 
   useEffect(() => {
-    // Load custom manifests before loading room (so placed items can resolve their manifests)
-    window.api.invoke<ItemManifest[]>(IPC_COMMANDS.MANIFEST_LIST).then((custom) => {
-      if (custom && custom.length > 0) loadCustomManifests(custom)
-      loadCharacters()
-      loadRoom()
-    })
+    loadCharacters()
+    loadRoom()
   }, [loadCharacters, loadRoom])
 
   useEffect(() => {
@@ -69,9 +61,16 @@ export default function App(): JSX.Element {
       if (activeTab !== 'layout') return
       e.preventDefault()
 
-      const manifestId = e.dataTransfer.getData('text/plain')
-      const manifest = getManifestById(manifestId)
-      if (!manifest) return
+      const relativePath = e.dataTransfer.getData('text/plain')
+      if (!relativePath) return
+
+      // Derive category from path: "{theme}/{category}/{filename}"
+      const parts = relativePath.split('/')
+      const theme = parts[0] ?? 'custom'
+      const category = parts.length >= 2 ? parts[1] : 'furniture'
+
+      // Default footprints: office pack = 2x3, custom = 2x2
+      const footprint = theme === 'office' ? { w: 2, h: 3 } : { w: 2, h: 2 }
 
       const rect = e.currentTarget.getBoundingClientRect()
       const cellSize = Math.min(
@@ -82,14 +81,14 @@ export default function App(): JSX.Element {
       const gridX = Math.max(
         0,
         Math.min(
-          GRID_COLS - manifest.footprint.w,
+          GRID_COLS - footprint.w,
           Math.floor((e.clientX - rect.left) / cellSize)
         )
       )
       const gridY = Math.max(
         0,
         Math.min(
-          GRID_ROWS - manifest.footprint.h,
+          GRID_ROWS - footprint.h,
           Math.floor((e.clientY - rect.top) / cellSize)
         )
       )
@@ -97,9 +96,9 @@ export default function App(): JSX.Element {
       const id = crypto.randomUUID()
       useRoomStore.getState().addItem({
         id,
-        manifestId,
+        manifestId: relativePath,
         position: { x: gridX, y: gridY },
-        footprint: manifest.footprint,
+        footprint,
       })
       setDraggingManifestId(null)
     },
@@ -130,36 +129,10 @@ export default function App(): JSX.Element {
               <CharacterPanel characterId={selectedCharacterId} />
             )}
             <CharacterContextMenu />
-            <button
-              onClick={() => setShowCreateDialog(true)}
-              style={{
-                position: 'fixed',
-                bottom: '24px',
-                right: '24px',
-                width: '48px',
-                height: '48px',
-                borderRadius: '50%',
-                backgroundColor: '#0f3460',
-                border: '1px solid #1a4a80',
-                color: '#e0e0e0',
-                fontSize: '24px',
-                lineHeight: '1',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 200,
-                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
-              }}
-              title="Create new character"
-            >
-              +
-            </button>
-            {showCreateDialog && (
-              <CreateCharacterDialog onClose={() => setShowCreateDialog(false)} />
-            )}
           </>
         )}
+
+        {activeTab === 'characters' && <CharactersPanel />}
 
         {activeTab === 'layout' && (
           <>

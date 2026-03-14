@@ -12,7 +12,7 @@ export const CHARACTERS_FILE = 'characters.json'
 export const ROOM_LAYOUT_FILE = 'room-layout.json'
 export const SESSIONS_FILE = 'sessions.json'
 export const SOULS_DIR = 'souls'
-export const SPRITES_DIR = 'sprites'
+export const ASSETS_DIR = 'assets'
 
 // Default footprints (grid cells)
 export const FOOTPRINTS = {

@@ -34,10 +34,6 @@ export const IPC_COMMANDS = {
   // Dialog
   DIALOG_OPEN_FOLDER: 'dialog:open-folder',
 
-  // Custom manifest persistence
-  MANIFEST_LIST: 'manifest:list',
-  MANIFEST_SAVE: 'manifest:save',
-
   // Soul management
   SOUL_LIST: 'soul:list',
   SOUL_READ: 'soul:read',

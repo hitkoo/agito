@@ -6,7 +6,7 @@ import type { Character, EngineType, RoomLayout, SessionMapping } from '../share
 import type { AgitoStore } from './store'
 import { PtyPool } from './pty-pool'
 import { StatusDetector } from './status-detector'
-import { GRID_COLS, GRID_ROWS, WALL_ROWS, FOOTPRINTS, MAX_SESSION_HISTORY, SPRITES_DIR } from '../shared/constants'
+import { GRID_COLS, GRID_ROWS, WALL_ROWS, FOOTPRINTS, MAX_SESSION_HISTORY, ASSETS_DIR } from '../shared/constants'
 import type { EngineAdapter } from './engine/types'
 import { claudeCodeAdapter } from './engine/claude-code'
 import { codexAdapter } from './engine/codex'
@@ -324,23 +324,6 @@ export function registerIPCHandlers(store: AgitoStore): void {
     writeFileSync(join(soulsDir, filename), content, 'utf-8')
   })
 
-  // --- Custom manifest persistence ---
-
-  const customManifestsPath = join(store.getBasePath(), 'custom-manifests.json')
-
-  ipcMain.handle(IPC_COMMANDS.MANIFEST_LIST, () => {
-    if (!existsSync(customManifestsPath)) return []
-    try {
-      return JSON.parse(readFileSync(customManifestsPath, 'utf-8'))
-    } catch {
-      return []
-    }
-  })
-
-  ipcMain.handle(IPC_COMMANDS.MANIFEST_SAVE, (_, manifests: unknown) => {
-    writeFileSync(customManifestsPath, JSON.stringify(manifests, null, 2), 'utf-8')
-  })
-
   // --- Asset / Sprite management ---
 
   ipcMain.handle(IPC_COMMANDS.ASSET_RESOLVE_PATH, (_, relativePath: string) => {
@@ -351,41 +334,56 @@ export function registerIPCHandlers(store: AgitoStore): void {
   })
 
   ipcMain.handle(IPC_COMMANDS.SPRITE_LIST, () => {
-    const spritesDir = join(store.getBasePath(), SPRITES_DIR)
-    if (!existsSync(spritesDir)) {
-      mkdirSync(spritesDir, { recursive: true })
+    const assetsDir = join(store.getBasePath(), ASSETS_DIR)
+    if (!existsSync(assetsDir)) {
+      mkdirSync(assetsDir, { recursive: true })
       return []
     }
     const imageExts = ['.png', '.webp', '.jpg', '.jpeg']
-    const results: string[] = []
-    function scanDir(dir: string, prefix: string): void {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.isDirectory()) {
-          scanDir(join(dir, entry.name), prefix ? `${prefix}/${entry.name}` : entry.name)
-        } else if (imageExts.includes(extname(entry.name).toLowerCase())) {
-          results.push(prefix ? `${prefix}/${entry.name}` : entry.name)
+    const categories = ['character', 'furniture', 'tile']
+    const results: { theme: string; category: string; filename: string; relativePath: string }[] = []
+
+    // Scan assets/{theme}/{category}/ structure
+    for (const themeEntry of readdirSync(assetsDir, { withFileTypes: true })) {
+      if (!themeEntry.isDirectory()) continue
+      const theme = themeEntry.name
+      const themeDir = join(assetsDir, theme)
+      for (const catEntry of readdirSync(themeDir, { withFileTypes: true })) {
+        if (!catEntry.isDirectory()) continue
+        const category = catEntry.name
+        if (!categories.includes(category)) continue
+        const catDir = join(themeDir, category)
+        for (const fileEntry of readdirSync(catDir, { withFileTypes: true })) {
+          if (fileEntry.isDirectory()) continue
+          if (!imageExts.includes(extname(fileEntry.name).toLowerCase())) continue
+          results.push({
+            theme,
+            category,
+            filename: fileEntry.name,
+            relativePath: `${theme}/${category}/${fileEntry.name}`,
+          })
         }
       }
     }
-    scanDir(spritesDir, '')
     return results
   })
 
-  ipcMain.handle(IPC_COMMANDS.SPRITE_UPLOAD, async () => {
+  ipcMain.handle(IPC_COMMANDS.SPRITE_UPLOAD, async (_, category: string) => {
     const result = await dialog.showOpenDialog({
       filters: [{ name: 'Images', extensions: ['png', 'webp', 'jpg', 'jpeg'] }],
       properties: ['openFile'],
     })
     if (result.canceled || result.filePaths.length === 0) return null
 
+    const validCategory = ['character', 'furniture', 'tile'].includes(category) ? category : 'furniture'
     const sourcePath = result.filePaths[0]
-    const spritesDir = join(store.getBasePath(), SPRITES_DIR)
-    if (!existsSync(spritesDir)) {
-      mkdirSync(spritesDir, { recursive: true })
+    const destDir = join(store.getBasePath(), ASSETS_DIR, 'custom', validCategory)
+    if (!existsSync(destDir)) {
+      mkdirSync(destDir, { recursive: true })
     }
 
     let filename = basename(sourcePath)
-    let destPath = join(spritesDir, filename)
+    let destPath = join(destDir, filename)
 
     // Add numeric suffix if duplicate
     if (existsSync(destPath)) {
@@ -394,18 +392,18 @@ export function registerIPCHandlers(store: AgitoStore): void {
       let counter = 1
       while (existsSync(destPath)) {
         filename = `${nameWithoutExt}_${counter}${ext}`
-        destPath = join(spritesDir, filename)
+        destPath = join(destDir, filename)
         counter++
       }
     }
 
     copyFileSync(sourcePath, destPath)
-    return filename
+    return `custom/${validCategory}/${filename}`
   })
 
   ipcMain.handle(IPC_COMMANDS.SPRITE_READ_BASE64, (_, relativePath: string) => {
-    // Support both "file.png" and "subdir/file.png"
-    const filePath = join(store.getBasePath(), SPRITES_DIR, relativePath)
+    // relativePath is relative to ~/.agito/assets/ e.g. "office/furniture/desk.png"
+    const filePath = join(store.getBasePath(), ASSETS_DIR, relativePath)
     if (!existsSync(filePath)) return null
     const ext = extname(relativePath).toLowerCase().replace('.', '')
     const mime = ext === 'jpg' ? 'jpeg' : ext

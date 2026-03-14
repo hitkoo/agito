@@ -1137,26 +1137,50 @@ export function OfficeCanvas(): ReactElement {
     [theme]
   )
 
+  // Derive a manifest from the PlacedItem when getManifestById returns undefined.
+  // manifestId is now a relativePath like "office/furniture/desk.png"
+  const resolveManifest = useCallback((item: PlacedItem): ItemManifest => {
+    const existing = getManifestById(item.manifestId)
+    if (existing) return existing
+
+    // Derive from path: "{theme}/{category}/{filename}"
+    const parts = item.manifestId.split('/')
+    const category = parts.length >= 2 ? parts[1] : 'furniture'
+    const filename = parts[parts.length - 1] ?? item.manifestId
+    const displayName = filename.replace(/\.[^.]+$/, '').replace(/Modern_Office_Singles_32x32_/, '#')
+
+    return {
+      id: item.manifestId,
+      name: displayName,
+      category: (category === 'tile' ? 'tile' : 'furniture') as import('../../../shared/types').ItemCategory,
+      footprint: item.footprint,
+      texture: `assets/${item.manifestId}`,
+      anchor: { x: 0.5, y: 1.0 },
+      placementZone: 'floor',
+      tags: [],
+    }
+  }, [])
+
   const floorDecorItems = useMemo(
     () =>
       items
-        .map((item) => ({ item, manifest: getManifestById(item.manifestId) }))
+        .map((item) => ({ item, manifest: resolveManifest(item) }))
         .filter(
           (entry): entry is { item: PlacedItem; manifest: ItemManifest } =>
-            entry.manifest !== undefined && entry.manifest.category === 'tile'
+            entry.manifest.category === 'tile'
         ),
-    [items]
+    [items, resolveManifest]
   )
 
   const furnitureItems = useMemo(
     () =>
       items
-        .map((item) => ({ item, manifest: getManifestById(item.manifestId) }))
+        .map((item) => ({ item, manifest: resolveManifest(item) }))
         .filter(
           (entry): entry is { item: PlacedItem; manifest: ItemManifest } =>
-            entry.manifest !== undefined && entry.manifest.category === 'furniture'
+            entry.manifest.category === 'furniture'
         ),
-    [items]
+    [items, resolveManifest]
   )
 
   // Deselect when clicking empty canvas area
