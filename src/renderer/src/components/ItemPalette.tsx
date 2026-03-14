@@ -200,7 +200,7 @@ export function ItemPalette(): JSX.Element {
   }
 
   return (
-    <div className="absolute right-0 top-0 w-64 h-full bg-background border-l border-border z-[50] flex flex-col">
+    <div className="w-64 h-full bg-background border-l border-border flex flex-col shrink-0">
       {/* Header */}
       <div className="flex items-center justify-between p-3 border-b border-border">
         <h2 className="text-sm font-semibold">Items</h2>

@@ -108,38 +108,35 @@ export default function App(): JSX.Element {
   return (
     <div className="flex h-full w-full">
       <Sidebar />
-      <main className="flex-1 relative h-full overflow-hidden">
+      <main className="flex-1 flex h-full overflow-hidden relative">
         <div
           onDragOver={handleDragOver}
           onDrop={handleDrop}
-          className="w-full h-full"
+          className="flex-1 h-full relative"
         >
           <OfficeCanvas />
+
+          {activeTab === 'runtime' && (
+            <>
+              {selectedCharacterId !== null && (
+                <div
+                  onClick={() => selectCharacter(null)}
+                  className="absolute inset-0 bg-black/40 z-[50]"
+                />
+              )}
+              {selectedCharacterId && (
+                <CharacterPanel characterId={selectedCharacterId} />
+              )}
+              <CharacterContextMenu />
+            </>
+          )}
+
+          {activeTab === 'layout' && <LayoutContextMenu />}
         </div>
 
-        {activeTab === 'runtime' && (
-          <>
-            {selectedCharacterId !== null && (
-              <div
-                onClick={() => selectCharacter(null)}
-                className="absolute inset-0 bg-black/40 z-[50]"
-              />
-            )}
-            {selectedCharacterId && (
-              <CharacterPanel characterId={selectedCharacterId} />
-            )}
-            <CharacterContextMenu />
-          </>
-        )}
+        {activeTab === 'layout' && <ItemPalette />}
 
         {activeTab === 'characters' && <CharactersPanel />}
-
-        {activeTab === 'layout' && (
-          <>
-            <ItemPalette />
-            <LayoutContextMenu />
-          </>
-        )}
 
         {activeTab === 'settings' && <SettingsPanel />}
       </main>

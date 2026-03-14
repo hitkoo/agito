@@ -98,19 +98,22 @@ function checkCollision(
 // useWindowSize
 // ---------------------------------------------------------------------------
 
-function useWindowSize(): { width: number; height: number } {
-  const [size, setSize] = useState({
-    width: window.innerWidth,
-    height: window.innerHeight,
-  })
+function useContainerSize(ref: React.RefObject<HTMLDivElement | null>): { width: number; height: number } {
+  const [size, setSize] = useState({ width: 800, height: 600 })
 
   useEffect(() => {
-    const onResize = (): void => {
-      setSize({ width: window.innerWidth, height: window.innerHeight })
-    }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
+    const el = ref.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) {
+        setSize({ width: entry.contentRect.width, height: entry.contentRect.height })
+      }
+    })
+    ro.observe(el)
+    setSize({ width: el.clientWidth, height: el.clientHeight })
+    return () => ro.disconnect()
+  }, [ref])
 
   return size
 }
@@ -141,8 +144,17 @@ function BackgroundLayer({
         return
       }
 
-      // Layout mode: faint grid lines for placement guide
-      g.lineStyle(1, palette.grid, 0.15)
+      // Layout mode: checkerboard grid for placement guide
+      for (let row = 0; row < gridRows; row++) {
+        for (let col = 0; col < gridCols; col++) {
+          const isEven = (row + col) % 2 === 0
+          g.beginFill(isEven ? palette.floorA : palette.floorB, 1)
+          g.drawRect(col * cellSize, row * cellSize, cellSize, cellSize)
+          g.endFill()
+        }
+      }
+      // Grid lines on top
+      g.lineStyle(1, palette.grid, 0.2)
       for (let x = 0; x <= gridCols; x++) {
         g.moveTo(x * cellSize, 0)
         g.lineTo(x * cellSize, gridRows * cellSize)
@@ -1065,7 +1077,8 @@ function CharacterSprite({
 // ---------------------------------------------------------------------------
 
 export function OfficeCanvas(): ReactElement {
-  const { width: winW, height: winH } = useWindowSize()
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const { width: winW, height: winH } = useContainerSize(containerRef)
   const gridCols = useRoomStore((s) => s.gridCols)
   const gridRows = useRoomStore((s) => s.gridRows)
   const cellW = Math.floor(winW / gridCols)
@@ -1188,6 +1201,8 @@ export function OfficeCanvas(): ReactElement {
   }, [selectLayoutItem])
 
   return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    <div ref={containerRef} style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
     <Stage
       width={stageW}
       height={stageH}
@@ -1240,5 +1255,7 @@ export function OfficeCanvas(): ReactElement {
         </Container>
       </Container>
     </Stage>
+    </div>
+    </div>
   )
 }

@@ -5,7 +5,7 @@ import { cn } from '../lib/utils'
 
 const tabs: { id: AppTab; icon: typeof Zap; label: string }[] = [
   { id: 'runtime', icon: Zap, label: 'Runtime' },
-  { id: 'layout', icon: LayoutGrid, label: 'Layout' },
+  { id: 'layout', icon: LayoutGrid, label: 'Placement' },
   { id: 'characters', icon: Users, label: 'Characters' },
   { id: 'settings', icon: Settings, label: 'Settings' },
 ]
