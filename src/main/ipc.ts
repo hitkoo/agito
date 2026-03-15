@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from 'fs'
 import { join, basename, extname } from 'path'
 import { IPC_COMMANDS, IPC_EVENTS } from '../shared/ipc-channels'
-import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, SpriteGenerateRequest, SpriteGenerateResult } from '../shared/types'
+import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, AssetGenerateRequest, AssetGenerateResult } from '../shared/types'
 import type { AgitoStore } from './store'
 import { PtyPool } from './pty-pool'
 import { StatusDetector } from './status-detector'
@@ -95,7 +95,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
         name: args.name,
         engine: args.engine,
         soul: args.soul ?? '',
-        sprite: '',
+        skin: '',
         gridPosition,
         currentSessionId: null,
         sessionHistory: [],
@@ -333,14 +333,14 @@ export function registerIPCHandlers(store: AgitoStore): void {
     return absPath
   })
 
-  ipcMain.handle(IPC_COMMANDS.SPRITE_LIST, () => {
+  ipcMain.handle(IPC_COMMANDS.ASSET_LIST, () => {
     const assetsDir = join(store.getBasePath(), ASSETS_DIR)
     if (!existsSync(assetsDir)) {
       mkdirSync(assetsDir, { recursive: true })
       return []
     }
     const imageExts = ['.png', '.webp', '.jpg', '.jpeg']
-    const categories = ['character', 'furniture', 'tile']
+    const categories = ['skin', 'furniture', 'background']
     const results: { theme: string; category: string; filename: string; relativePath: string }[] = []
 
     // Scan assets/{theme}/{category}/ structure
@@ -368,14 +368,14 @@ export function registerIPCHandlers(store: AgitoStore): void {
     return results
   })
 
-  ipcMain.handle(IPC_COMMANDS.SPRITE_UPLOAD, async (_, category: string) => {
+  ipcMain.handle(IPC_COMMANDS.ASSET_UPLOAD, async (_, category: string) => {
     const result = await dialog.showOpenDialog({
       filters: [{ name: 'Images', extensions: ['png', 'webp', 'jpg', 'jpeg'] }],
       properties: ['openFile'],
     })
     if (result.canceled || result.filePaths.length === 0) return null
 
-    const validCategory = ['character', 'furniture', 'tile'].includes(category) ? category : 'furniture'
+    const validCategory = ['skin', 'furniture', 'background'].includes(category) ? category : 'furniture'
     const sourcePath = result.filePaths[0]
     const destDir = join(store.getBasePath(), ASSETS_DIR, 'custom', validCategory)
     if (!existsSync(destDir)) {
@@ -401,7 +401,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
     return `custom/${validCategory}/${filename}`
   })
 
-  ipcMain.handle(IPC_COMMANDS.SPRITE_READ_BASE64, (_, relativePath: string) => {
+  ipcMain.handle(IPC_COMMANDS.ASSET_READ_BASE64, (_, relativePath: string) => {
     // relativePath is relative to ~/.agito/assets/ e.g. "office/furniture/desk.png"
     const filePath = join(store.getBasePath(), ASSETS_DIR, relativePath)
     if (!existsSync(filePath)) return null
@@ -424,7 +424,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
   // --- Sprite Generation (via agito-server) ---
 
-  ipcMain.handle(IPC_COMMANDS.SPRITE_GENERATE, async (_, req: SpriteGenerateRequest): Promise<SpriteGenerateResult> => {
+  ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE, async (_, req: AssetGenerateRequest): Promise<AssetGenerateResult> => {
     const settings = store.getSettings()
     const baseUrl = settings.apiBaseUrl || 'http://localhost:8000'
 
@@ -548,6 +548,7 @@ function findEmptyPosition(characters: Character[]): { x: number; y: number } {
   for (let y = 0; y <= GRID_ROWS - fh; y++) {
     for (let x = 0; x <= GRID_COLS - fw; x++) {
       const occupied = characters.some((c) => {
+        if (!c.gridPosition) return false
         const cx = c.gridPosition.x
         const cy = c.gridPosition.y
         // Check if the 2x2 area at (x,y) overlaps with this character's 2x2 footprint

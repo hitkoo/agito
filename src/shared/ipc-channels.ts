@@ -3,7 +3,7 @@ export const IPC_EVENTS = {
   PTY_DATA: 'pty:data',
   CHARACTER_STATUS: 'character:status',
   STORE_UPDATED: 'store:updated',
-  SPRITE_GENERATE_PROGRESS: 'sprite:generate-progress',
+  ASSET_GENERATE_PROGRESS: 'asset:generate-progress',
 } as const
 
 // Renderer -> Main commands (invoke)
@@ -40,14 +40,14 @@ export const IPC_COMMANDS = {
   SOUL_READ: 'soul:read',
   SOUL_WRITE: 'soul:write',
 
-  // Asset / Sprite management
+  // Asset management
   ASSET_RESOLVE_PATH: 'asset:resolve-path',
-  SPRITE_LIST: 'sprite:list',
-  SPRITE_UPLOAD: 'sprite:upload',
-  SPRITE_READ_BASE64: 'sprite:read-base64',
+  ASSET_LIST: 'asset:list',
+  ASSET_UPLOAD: 'asset:upload',
+  ASSET_READ_BASE64: 'asset:read-base64',
 
-  // Sprite generation (via agito-server)
-  SPRITE_GENERATE: 'sprite:generate',
+  // Asset generation (via agito-server)
+  ASSET_GENERATE: 'asset:generate',
 
   // Settings
   SETTINGS_READ: 'settings:read',

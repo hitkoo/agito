@@ -15,7 +15,7 @@ export async function loadTexture(path: string): Promise<Texture | null> {
 
     // Load as base64 data URL via IPC (bypasses file:// security restriction)
     const dataUrl = await window.api.invoke<string | null>(
-      IPC_COMMANDS.SPRITE_READ_BASE64,
+      IPC_COMMANDS.ASSET_READ_BASE64,
       relPath
     )
     if (!dataUrl) return null

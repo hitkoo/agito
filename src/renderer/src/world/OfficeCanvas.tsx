@@ -850,7 +850,7 @@ function CharacterSprite({
   activeTab,
   isSelected,
 }: {
-  character: Character
+  character: Character & { gridPosition: GridPosition }
   cellSize: number
   onSelect: (id: string | null) => void
   onRightClick: (characterId: string, x: number, y: number) => void
@@ -869,12 +869,12 @@ function CharacterSprite({
 
   const [texture, setTexture] = useState<Texture | null>(null)
   useEffect(() => {
-    if (character.sprite) {
-      loadTexture(character.sprite).then(setTexture)
+    if (character.skin) {
+      loadTexture(character.skin).then(setTexture)
     } else {
       setTexture(null)
     }
-  }, [character.sprite])
+  }, [character.skin])
 
   const containerRef = useRef<PixiContainer | null>(null)
   const dragging = useRef(false)
@@ -1164,7 +1164,7 @@ export function OfficeCanvas(): ReactElement {
     return {
       id: item.manifestId,
       name: displayName,
-      category: (category === 'tile' ? 'tile' : 'furniture') as import('../../../shared/types').ItemCategory,
+      category: (category === 'background' ? 'background' : 'furniture') as import('../../../shared/types').ItemCategory,
       footprint: item.footprint,
       texture: `assets/${item.manifestId}`,
       anchor: { x: 0.5, y: 1.0 },
@@ -1179,7 +1179,7 @@ export function OfficeCanvas(): ReactElement {
         .map((item) => ({ item, manifest: resolveManifest(item) }))
         .filter(
           (entry): entry is { item: PlacedItem; manifest: ItemManifest } =>
-            entry.manifest.category === 'tile'
+            entry.manifest.category === 'background'
         ),
     [items, resolveManifest]
   )
@@ -1241,7 +1241,7 @@ export function OfficeCanvas(): ReactElement {
               isSelected={selectedLayoutItem?.type === 'furniture' && selectedLayoutItem.id === item.id}
             />
           ))}
-          {characters.map((char) => (
+          {characters.filter((c): c is Character & { gridPosition: GridPosition } => c.gridPosition !== null).map((char) => (
             <CharacterSprite
               key={char.id}
               character={char}

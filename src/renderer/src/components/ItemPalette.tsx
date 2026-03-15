@@ -4,7 +4,7 @@ import { useUIStore } from '../stores/ui-store'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import { Button } from './ui/button'
 import { GenerateDialog } from './GenerateDialog'
-import type { ItemCategory, SpriteCategory } from '../../../shared/types'
+import type { ItemCategory, AssetCategory } from '../../../shared/types'
 
 // --- Types ---
 
@@ -21,7 +21,7 @@ function useSpritePreview(relativePath: string): string | null {
   const [dataUrl, setDataUrl] = useState<string | null>(null)
   useEffect(() => {
     if (!relativePath) { setDataUrl(null); return }
-    window.api.invoke<string | null>(IPC_COMMANDS.SPRITE_READ_BASE64, relativePath).then(setDataUrl)
+    window.api.invoke<string | null>(IPC_COMMANDS.ASSET_READ_BASE64, relativePath).then(setDataUrl)
   }, [relativePath])
   return dataUrl
 }
@@ -88,7 +88,7 @@ function CollapsibleSection({ title, count, defaultOpen = true, children }: {
 
 // --- Main Palette ---
 
-type PaletteTab = 'tile' | 'furniture' | 'character'
+type PaletteTab = 'background' | 'furniture' | 'skin'
 
 export function ItemPalette(): JSX.Element {
   const [showGenerateDialog, setShowGenerateDialog] = useState(false)
@@ -101,7 +101,7 @@ export function ItemPalette(): JSX.Element {
   const loadSprites = useCallback(async () => {
     setLoading(true)
     try {
-      const entries = await window.api.invoke<SpriteEntry[]>(IPC_COMMANDS.SPRITE_LIST)
+      const entries = await window.api.invoke<SpriteEntry[]>(IPC_COMMANDS.ASSET_LIST)
       setAllSprites(entries ?? [])
       setLoading(false)
 
@@ -113,7 +113,7 @@ export function ItemPalette(): JSX.Element {
           const results = await Promise.all(
             batch.map(async (entry) => {
               try {
-                const data = await window.api.invoke<string | null>(IPC_COMMANDS.SPRITE_READ_BASE64, entry.relativePath)
+                const data = await window.api.invoke<string | null>(IPC_COMMANDS.ASSET_READ_BASE64, entry.relativePath)
                 return { key: entry.relativePath, data }
               } catch {
                 return { key: entry.relativePath, data: null }
@@ -137,7 +137,7 @@ export function ItemPalette(): JSX.Element {
   }, [loadSprites])
 
   // Filter by category for each tab
-  const tileSprites = useMemo(() => allSprites.filter((s) => s.category === 'tile'), [allSprites])
+  const tileSprites = useMemo(() => allSprites.filter((s) => s.category === 'background'), [allSprites])
   const furnitureSprites = useMemo(() => allSprites.filter((s) => s.category === 'furniture'), [allSprites])
 
   // Group by theme
@@ -155,17 +155,17 @@ export function ItemPalette(): JSX.Element {
   const furnitureGroups = useMemo(() => groupByTheme(furnitureSprites), [groupByTheme, furnitureSprites])
 
   const handleUpload = useCallback(async () => {
-    const category: ItemCategory = activeTab === 'tile' ? 'tile' : 'furniture'
-    const relativePath = await window.api.invoke<string | null>(IPC_COMMANDS.SPRITE_UPLOAD, category)
+    const category: ItemCategory = activeTab === 'background' ? 'background' : 'furniture'
+    const relativePath = await window.api.invoke<string | null>(IPC_COMMANDS.ASSET_UPLOAD, category)
     if (relativePath) {
       await loadSprites()
     }
   }, [activeTab, loadSprites])
 
   const tabs: { id: PaletteTab; label: string }[] = [
-    { id: 'tile', label: 'Tile/Wall' },
+    { id: 'background', label: 'Background' },
     { id: 'furniture', label: 'Furniture' },
-    { id: 'character', label: 'Character' },
+    { id: 'skin', label: 'Character' },
   ]
 
   const renderThemeGroups = (groups: Map<string, SpriteEntry[]>): JSX.Element => {
@@ -236,9 +236,9 @@ export function ItemPalette(): JSX.Element {
           <p className="text-xs text-muted-foreground">Loading sprites...</p>
         ) : (
           <>
-            {activeTab === 'tile' && renderThemeGroups(tileGroups)}
+            {activeTab === 'background' && renderThemeGroups(tileGroups)}
             {activeTab === 'furniture' && renderThemeGroups(furnitureGroups)}
-            {activeTab === 'character' && (
+            {activeTab === 'skin' && (
               <div className="text-sm text-muted-foreground text-center py-8">
                 <p>Character sprites are managed via</p>
                 <p className="mt-1">Runtime tab → Right-click → Edit → Sprite</p>
@@ -250,7 +250,7 @@ export function ItemPalette(): JSX.Element {
 
       {showGenerateDialog && (
         <GenerateDialog
-          defaultCategory={(activeTab === 'character' ? 'furniture' : activeTab) as SpriteCategory}
+          defaultCategory={(activeTab === 'skin' ? 'furniture' : activeTab) as AssetCategory}
           onClose={() => setShowGenerateDialog(false)}
           onGenerated={() => { setShowGenerateDialog(false); loadSprites() }}
         />

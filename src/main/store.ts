@@ -30,9 +30,9 @@ export class AgitoStore {
     const dirs = [
       this.basePath,
       join(this.basePath, SOULS_DIR),
-      join(this.basePath, ASSETS_DIR, 'custom', 'character'),
+      join(this.basePath, ASSETS_DIR, 'custom', 'skin'),
       join(this.basePath, ASSETS_DIR, 'custom', 'furniture'),
-      join(this.basePath, ASSETS_DIR, 'custom', 'tile'),
+      join(this.basePath, ASSETS_DIR, 'custom', 'background'),
     ]
     for (const dir of dirs) {
       if (!existsSync(dir)) {

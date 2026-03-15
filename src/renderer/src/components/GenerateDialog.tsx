@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect } from 'react'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
-import { SPRITE_SIZES } from '../../../shared/constants'
+import { ASSET_SIZES } from '../../../shared/constants'
 import { Button } from './ui/button'
 import { Label } from './ui/label'
-import type { SpriteCategory, SpriteGenerateRequest, SpriteGenerateResult } from '../../../shared/types'
+import type { AssetCategory, AssetGenerateRequest, AssetGenerateResult } from '../../../shared/types'
 
 interface TemplateInfo {
   id: string
@@ -15,13 +15,13 @@ interface TemplateInfo {
 }
 
 interface GenerateDialogProps {
-  defaultCategory: SpriteCategory
+  defaultCategory: AssetCategory
   onClose: () => void
   onGenerated: (relativePath: string) => void
 }
 
 export function GenerateDialog({ defaultCategory, onClose, onGenerated }: GenerateDialogProps): JSX.Element {
-  const [category, setCategory] = useState<SpriteCategory>(defaultCategory)
+  const [category, setCategory] = useState<AssetCategory>(defaultCategory)
   const [prompt, setPrompt] = useState('')
   const [size, setSize] = useState(64)
   const [templateId, setTemplateId] = useState<string | null>(null)
@@ -66,7 +66,7 @@ export function GenerateDialog({ defaultCategory, onClose, onGenerated }: Genera
     setPreviewUrl(null)
     setStatusText('Connecting to server...')
 
-    const req: SpriteGenerateRequest = {
+    const req: AssetGenerateRequest = {
       category,
       prompt: prompt.trim(),
       width: size,
@@ -76,12 +76,12 @@ export function GenerateDialog({ defaultCategory, onClose, onGenerated }: Genera
 
     try {
       setStatusText('Generating sprite...')
-      const result = await window.api.invoke<SpriteGenerateResult>(IPC_COMMANDS.SPRITE_GENERATE, req)
+      const result = await window.api.invoke<AssetGenerateResult>(IPC_COMMANDS.ASSET_GENERATE, req)
 
       if (result.success && result.relativePath) {
         // Load preview
         const dataUrl = await window.api.invoke<string | null>(
-          IPC_COMMANDS.SPRITE_READ_BASE64,
+          IPC_COMMANDS.ASSET_READ_BASE64,
           result.relativePath
         )
         setPreviewUrl(dataUrl)
@@ -117,7 +117,7 @@ export function GenerateDialog({ defaultCategory, onClose, onGenerated }: Genera
         <div className="space-y-1.5">
           <Label className="text-sm">Category</Label>
           <div className="flex gap-2">
-            {(['tile', 'furniture', 'character'] as SpriteCategory[]).map((cat) => (
+            {(['skin', 'furniture', 'background'] as AssetCategory[]).map((cat) => (
               <button
                 key={cat}
                 className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${
@@ -157,7 +157,7 @@ export function GenerateDialog({ defaultCategory, onClose, onGenerated }: Genera
             value={prompt}
             onChange={(e) => { setPrompt(e.target.value); setTemplateId(null) }}
             placeholder={
-              category === 'tile'
+              category === 'background'
                 ? 'e.g., warm wooden plank floor with subtle grain'
                 : category === 'furniture'
                   ? 'e.g., a standing desk with dual monitors'
@@ -172,7 +172,7 @@ export function GenerateDialog({ defaultCategory, onClose, onGenerated }: Genera
         <div className="space-y-1.5">
           <Label className="text-sm">Size</Label>
           <div className="flex gap-3">
-            {SPRITE_SIZES.map((s) => (
+            {ASSET_SIZES.map((s) => (
               <label key={s} className="flex items-center gap-1.5 text-sm cursor-pointer">
                 <input
                   type="radio"

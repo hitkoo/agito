@@ -33,7 +33,7 @@ function useSpritePreview(spritePath: string): string | null {
       ? spritePath.slice(7)
       : spritePath
     window.api
-      .invoke<string | null>(IPC_COMMANDS.SPRITE_READ_BASE64, relPath)
+      .invoke<string | null>(IPC_COMMANDS.ASSET_READ_BASE64, relPath)
       .then(setDataUrl)
   }, [spritePath])
   return dataUrl
@@ -64,7 +64,7 @@ function CharacterListCard({
   isSelected: boolean
   onSelect: (id: string) => void
 }): ReactElement {
-  const preview = useSpritePreview(character.sprite)
+  const preview = useSpritePreview(character.skin)
 
   return (
     <button
@@ -195,7 +195,7 @@ function EditDetailPanel({
     if (!character) return
     setName(character.name)
     setEngine(character.engine)
-    setSpritePath(character.sprite)
+    setSpritePath(character.skin)
     setShowSpriteLibrary(false)
     setError(null)
     setIsSubmitting(false)
@@ -222,7 +222,7 @@ function EditDetailPanel({
         : spritePath
       if (relPath) {
         window.api
-          .invoke<string | null>(IPC_COMMANDS.SPRITE_READ_BASE64, relPath)
+          .invoke<string | null>(IPC_COMMANDS.ASSET_READ_BASE64, relPath)
           .then(setSpritePreview)
       } else {
         setSpritePreview(null)
@@ -236,7 +236,7 @@ function EditDetailPanel({
     if (!character) return
     setName(character.name)
     setEngine(character.engine)
-    setSpritePath(character.sprite)
+    setSpritePath(character.skin)
     setShowSpriteLibrary(false)
     setError(null)
 
@@ -262,7 +262,7 @@ function EditDetailPanel({
         name: trimmed,
         engine,
         soul: soulPath,
-        sprite: spritePath,
+        skin: spritePath,
       })
       await loadCharacters()
       setIsSubmitting(false)
@@ -371,7 +371,7 @@ function EditDetailPanel({
                 variant="outline"
                 size="sm"
                 onClick={async () => {
-                  const relativePath = await window.api.invoke<string | null>(IPC_COMMANDS.SPRITE_UPLOAD, 'character')
+                  const relativePath = await window.api.invoke<string | null>(IPC_COMMANDS.ASSET_UPLOAD, 'skin')
                   if (relativePath) setSpritePath(`assets/${relativePath}`)
                 }}
                 disabled={isSubmitting}

@@ -21,9 +21,9 @@ export interface Character {
   id: string
   name: string
   soul: string // path to soul.md relative to ~/.agito/
-  sprite: string // path to sprite image relative to ~/.agito/
+  skin: string // path to skin image relative to ~/.agito/
   engine: EngineType
-  gridPosition: GridPosition
+  gridPosition: GridPosition | null
   currentSessionId: string | null
   sessionHistory: string[] // max 10, most recent first
   status: CharacterStatus
@@ -36,7 +36,7 @@ export interface Character {
 
 export type PlacementZone = 'floor' | 'wall'
 
-export type ItemCategory = 'tile' | 'furniture'
+export type ItemCategory = 'background' | 'furniture'
 
 export interface ItemFootprint {
   w: number
@@ -98,20 +98,34 @@ export interface AgitoSettings {
   defaultSpriteSize: number
 }
 
-// --- Sprite Generation ---
+// --- Asset Management ---
 
-export type SpriteCategory = 'tile' | 'furniture' | 'character'
+export type AssetSource = 'builtin' | 'custom'
 
-export interface SpriteGenerateRequest {
-  category: SpriteCategory
+export type AssetCategory = 'skin' | 'furniture' | 'background'
+
+export interface AssetListEntry {
+  theme: string
+  category: string
+  filename: string
+  relativePath: string
+  source: AssetSource
+}
+
+// --- Asset Generation ---
+
+export interface AssetGenerateRequest {
+  category: AssetCategory
   prompt: string
   width: number
   height: number
+  view?: '3/4' | 'iso'
+  source_image?: string | null
   reference_image?: string | null
   template_id?: string | null
 }
 
-export interface SpriteGenerateResult {
+export interface AssetGenerateResult {
   success: boolean
   relativePath?: string
   image_base64?: string

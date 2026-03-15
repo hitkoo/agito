@@ -16,6 +16,7 @@ export const ROOM_LAYOUT_FILE = 'room-layout.json'
 export const SESSIONS_FILE = 'sessions.json'
 export const SOULS_DIR = 'souls'
 export const ASSETS_DIR = 'assets'
+export const BUILTIN_ASSETS_DIR = 'builtin-assets'
 
 // Default footprints (grid cells)
 export const FOOTPRINTS = {
@@ -38,4 +39,7 @@ export const DEFAULT_SETTINGS = {
   defaultSpriteSize: 64,
 } as const
 
-export const SPRITE_SIZES = [32, 64, 128] as const
+export const ASSET_SIZES = [32, 64, 128] as const
+
+// Asset categories
+export const ASSET_CATEGORIES = ['skin', 'furniture', 'background'] as const

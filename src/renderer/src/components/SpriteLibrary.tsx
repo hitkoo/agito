@@ -27,13 +27,13 @@ export function SpriteLibrary({ onSelect, currentSprite }: SpriteLibraryProps): 
   const loadSprites = async (): Promise<void> => {
     setLoading(true)
     try {
-      const entries = await window.api.invoke<SpriteListEntry[]>(IPC_COMMANDS.SPRITE_LIST)
-      // Filter to character sprites for the sprite library (used in character editing)
-      const characterEntries = entries.filter((e) => e.category === 'character')
+      const entries = await window.api.invoke<SpriteListEntry[]>(IPC_COMMANDS.ASSET_LIST)
+      // Filter to skin sprites for the sprite library (used in character editing)
+      const characterEntries = entries.filter((e) => e.category === 'skin')
       const spriteEntries: SpriteEntry[] = await Promise.all(
         characterEntries.map(async (entry) => {
           const dataUrl = await window.api.invoke<string | null>(
-            IPC_COMMANDS.SPRITE_READ_BASE64,
+            IPC_COMMANDS.ASSET_READ_BASE64,
             entry.relativePath
           )
           return { relativePath: entry.relativePath, filename: entry.filename, dataUrl }
@@ -50,7 +50,7 @@ export function SpriteLibrary({ onSelect, currentSprite }: SpriteLibraryProps): 
   }, [])
 
   const handleUpload = async (): Promise<void> => {
-    const relativePath = await window.api.invoke<string | null>(IPC_COMMANDS.SPRITE_UPLOAD, 'character')
+    const relativePath = await window.api.invoke<string | null>(IPC_COMMANDS.ASSET_UPLOAD, 'skin')
     if (relativePath) {
       await loadSprites()
       onSelect(`assets/${relativePath}`)
