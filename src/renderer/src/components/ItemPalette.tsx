@@ -1,8 +1,10 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
+import { Sparkles } from 'lucide-react'
 import { useUIStore } from '../stores/ui-store'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import { Button } from './ui/button'
-import type { ItemCategory } from '../../../shared/types'
+import { GenerateDialog } from './GenerateDialog'
+import type { ItemCategory, SpriteCategory } from '../../../shared/types'
 
 // --- Types ---
 
@@ -89,6 +91,7 @@ function CollapsibleSection({ title, count, defaultOpen = true, children }: {
 type PaletteTab = 'tile' | 'furniture' | 'character'
 
 export function ItemPalette(): JSX.Element {
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false)
   const [activeTab, setActiveTab] = useState<PaletteTab>('furniture')
   const [allSprites, setAllSprites] = useState<SpriteEntry[]>([])
   const [spriteDataUrls, setSpriteDataUrls] = useState<Map<string, string>>(new Map())
@@ -204,7 +207,12 @@ export function ItemPalette(): JSX.Element {
       {/* Header */}
       <div className="flex items-center justify-between p-3 border-b border-border">
         <h2 className="text-sm font-semibold">Items</h2>
-        <Button variant="outline" size="sm" onClick={handleUpload}>+ Add</Button>
+        <div className="flex gap-1">
+          <Button variant="outline" size="sm" onClick={() => setShowGenerateDialog(true)}>
+            <Sparkles className="h-3 w-3 mr-1" />AI
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleUpload}>+ Add</Button>
+        </div>
       </div>
 
       {/* Tab bar */}
@@ -239,6 +247,14 @@ export function ItemPalette(): JSX.Element {
           </>
         )}
       </div>
+
+      {showGenerateDialog && (
+        <GenerateDialog
+          defaultCategory={(activeTab === 'character' ? 'furniture' : activeTab) as SpriteCategory}
+          onClose={() => setShowGenerateDialog(false)}
+          onGenerated={() => { setShowGenerateDialog(false); loadSprites() }}
+        />
+      )}
     </div>
   )
 }

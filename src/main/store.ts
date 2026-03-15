@@ -8,12 +8,15 @@ import {
   SESSIONS_FILE,
   SOULS_DIR,
   ASSETS_DIR,
+  SETTINGS_FILE,
+  DEFAULT_SETTINGS,
 } from '../shared/constants'
 import type {
   Character,
   RoomLayout,
   SessionMapping,
   AgitoPersistentData,
+  AgitoSettings,
 } from '../shared/types'
 
 export class AgitoStore {
@@ -45,6 +48,9 @@ export class AgitoStore {
     }
     if (!existsSync(this.filePath(SESSIONS_FILE))) {
       this.writeJSON(SESSIONS_FILE, [])
+    }
+    if (!existsSync(this.filePath(SETTINGS_FILE))) {
+      this.writeJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS })
     }
   }
 
@@ -89,11 +95,24 @@ export class AgitoStore {
     this.writeJSON(SESSIONS_FILE, sessions)
   }
 
+  getSettings(): AgitoSettings {
+    try {
+      return this.readJSON<AgitoSettings>(SETTINGS_FILE)
+    } catch {
+      return { ...DEFAULT_SETTINGS }
+    }
+  }
+
+  saveSettings(settings: AgitoSettings): void {
+    this.writeJSON(SETTINGS_FILE, settings)
+  }
+
   getAll(): AgitoPersistentData {
     return {
       characters: this.getCharacters(),
       roomLayout: this.getRoomLayout(),
       sessions: this.getSessions(),
+      settings: this.getSettings(),
     }
   }
 

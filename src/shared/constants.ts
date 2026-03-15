@@ -28,3 +28,14 @@ export const FOOTPRINTS = {
 
 // Supported engines
 export const SUPPORTED_ENGINES = ['claude-code', 'codex'] as const
+
+// Settings
+export const SETTINGS_FILE = 'settings.json'
+export const DEFAULT_SETTINGS = {
+  geminiApiKey: '',
+  geminiModel: 'gemini-2.0-flash-preview-image-generation',
+  apiBaseUrl: 'http://localhost:8000',
+  defaultSpriteSize: 64,
+} as const
+
+export const SPRITE_SIZES = [32, 64, 128] as const

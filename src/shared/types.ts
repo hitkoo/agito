@@ -86,4 +86,36 @@ export interface AgitoPersistentData {
   characters: Character[]
   roomLayout: RoomLayout
   sessions: SessionMapping[]
+  settings: AgitoSettings
+}
+
+// --- Settings ---
+
+export interface AgitoSettings {
+  geminiApiKey: string
+  geminiModel: string
+  apiBaseUrl: string
+  defaultSpriteSize: number
+}
+
+// --- Sprite Generation ---
+
+export type SpriteCategory = 'tile' | 'furniture' | 'character'
+
+export interface SpriteGenerateRequest {
+  category: SpriteCategory
+  prompt: string
+  width: number
+  height: number
+  reference_image?: string | null
+  template_id?: string | null
+}
+
+export interface SpriteGenerateResult {
+  success: boolean
+  relativePath?: string
+  image_base64?: string
+  filename?: string
+  error?: string
+  duration_ms?: number
 }

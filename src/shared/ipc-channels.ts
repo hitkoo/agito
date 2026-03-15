@@ -3,6 +3,7 @@ export const IPC_EVENTS = {
   PTY_DATA: 'pty:data',
   CHARACTER_STATUS: 'character:status',
   STORE_UPDATED: 'store:updated',
+  SPRITE_GENERATE_PROGRESS: 'sprite:generate-progress',
 } as const
 
 // Renderer -> Main commands (invoke)
@@ -44,6 +45,13 @@ export const IPC_COMMANDS = {
   SPRITE_LIST: 'sprite:list',
   SPRITE_UPLOAD: 'sprite:upload',
   SPRITE_READ_BASE64: 'sprite:read-base64',
+
+  // Sprite generation (via agito-server)
+  SPRITE_GENERATE: 'sprite:generate',
+
+  // Settings
+  SETTINGS_READ: 'settings:read',
+  SETTINGS_WRITE: 'settings:write',
 } as const
 
 export type IPCEvent = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS]

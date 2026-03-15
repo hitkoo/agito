@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from 'fs'
 import { join, basename, extname } from 'path'
 import { IPC_COMMANDS, IPC_EVENTS } from '../shared/ipc-channels'
-import type { Character, EngineType, RoomLayout, SessionMapping } from '../shared/types'
+import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, SpriteGenerateRequest, SpriteGenerateResult } from '../shared/types'
 import type { AgitoStore } from './store'
 import { PtyPool } from './pty-pool'
 import { StatusDetector } from './status-detector'
@@ -409,6 +409,66 @@ export function registerIPCHandlers(store: AgitoStore): void {
     const mime = ext === 'jpg' ? 'jpeg' : ext
     const data = readFileSync(filePath)
     return `data:image/${mime};base64,${data.toString('base64')}`
+  })
+
+  // --- Settings ---
+
+  ipcMain.handle(IPC_COMMANDS.SETTINGS_READ, () => {
+    return store.getSettings()
+  })
+
+  ipcMain.handle(IPC_COMMANDS.SETTINGS_WRITE, (_, settings: AgitoSettings) => {
+    store.saveSettings(settings)
+    broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'settings' })
+  })
+
+  // --- Sprite Generation (via agito-server) ---
+
+  ipcMain.handle(IPC_COMMANDS.SPRITE_GENERATE, async (_, req: SpriteGenerateRequest): Promise<SpriteGenerateResult> => {
+    const settings = store.getSettings()
+    const baseUrl = settings.apiBaseUrl || 'http://localhost:8000'
+
+    try {
+      const res = await fetch(`${baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req),
+        signal: AbortSignal.timeout(120_000),
+      })
+
+      if (!res.ok) {
+        const text = await res.text()
+        return { success: false, error: `Server error ${res.status}: ${text}` }
+      }
+
+      const result = await res.json() as { success: boolean; image_base64?: string; filename?: string; error?: string; duration_ms?: number }
+
+      if (result.success && result.image_base64 && result.filename) {
+        // Save the generated image to local assets
+        const buf = Buffer.from(result.image_base64, 'base64')
+        const destDir = join(store.getBasePath(), ASSETS_DIR, 'custom', req.category)
+        if (!existsSync(destDir)) {
+          mkdirSync(destDir, { recursive: true })
+        }
+        const destPath = join(destDir, result.filename)
+        writeFileSync(destPath, buf)
+
+        return {
+          success: true,
+          relativePath: `custom/${req.category}/${result.filename}`,
+          filename: result.filename,
+          duration_ms: result.duration_ms,
+        }
+      }
+
+      return { success: false, error: result.error || 'Unknown error' }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED')) {
+        return { success: false, error: 'Cannot connect to agito-server. Is it running on ' + baseUrl + '?' }
+      }
+      return { success: false, error: msg }
+    }
   })
 
   // --- Auto-resume stale sessions on startup ---

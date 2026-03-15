@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
-import { AGITO_DIR_NAME, MIN_GRID_COLS, MAX_GRID_COLS, MIN_GRID_ROWS, MAX_GRID_ROWS } from '../../../shared/constants'
+import { AGITO_DIR_NAME, MIN_GRID_COLS, MAX_GRID_COLS, MIN_GRID_ROWS, MAX_GRID_ROWS, DEFAULT_SETTINGS } from '../../../shared/constants'
 import { Label } from './ui/label'
+import { Button } from './ui/button'
 import { useUIStore, type ThemeMode } from '../stores/ui-store'
 import { useRoomStore } from '../stores/room-store'
+import type { AgitoSettings } from '../../../shared/types'
 
 interface EngineDetectResult {
   found: boolean
@@ -28,6 +30,34 @@ export function SettingsPanel(): JSX.Element {
   const setTheme = useUIStore((s) => s.setTheme)
   const gridCols = useRoomStore((s) => s.gridCols)
   const gridRows = useRoomStore((s) => s.gridRows)
+
+  // --- AI Settings ---
+  const [geminiApiKey, setGeminiApiKey] = useState<string>('')
+  const [geminiModel, setGeminiModel] = useState<string>(DEFAULT_SETTINGS.geminiModel)
+  const [apiBaseUrl, setApiBaseUrl] = useState<string>(DEFAULT_SETTINGS.apiBaseUrl)
+  const [settingsSaved, setSettingsSaved] = useState(false)
+
+  useEffect(() => {
+    window.api.invoke<AgitoSettings>(IPC_COMMANDS.SETTINGS_READ).then((s) => {
+      if (s) {
+        setGeminiApiKey(s.geminiApiKey || '')
+        setGeminiModel(s.geminiModel || DEFAULT_SETTINGS.geminiModel)
+        setApiBaseUrl(s.apiBaseUrl || DEFAULT_SETTINGS.apiBaseUrl)
+      }
+    })
+  }, [])
+
+  const saveAiSettings = useCallback(async () => {
+    const settings: AgitoSettings = {
+      geminiApiKey,
+      geminiModel,
+      apiBaseUrl,
+      defaultSpriteSize: DEFAULT_SETTINGS.defaultSpriteSize,
+    }
+    await window.api.invoke(IPC_COMMANDS.SETTINGS_WRITE, settings)
+    setSettingsSaved(true)
+    setTimeout(() => setSettingsSaved(false), 2000)
+  }, [geminiApiKey, geminiModel, apiBaseUrl])
 
   const [engines, setEngines] = useState<EngineStatus[]>([
     { name: 'Claude Code', key: 'claude-code', result: null, loading: true },
@@ -106,6 +136,56 @@ export function SettingsPanel(): JSX.Element {
                 )}
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* AI Sprite Generation */}
+        <section className="space-y-3">
+          <Label className="text-base font-semibold">AI Sprite Generation</Label>
+          <div className="space-y-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="api-base-url" className="text-sm">Server URL</Label>
+              <input
+                id="api-base-url"
+                type="text"
+                value={apiBaseUrl}
+                onChange={(e) => setApiBaseUrl(e.target.value)}
+                placeholder="http://localhost:8000"
+                className="rounded-md border border-border bg-muted/30 px-3 py-1.5 text-sm font-mono"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gemini-key" className="text-sm">Gemini API Key</Label>
+              <input
+                id="gemini-key"
+                type="password"
+                value={geminiApiKey}
+                onChange={(e) => setGeminiApiKey(e.target.value)}
+                placeholder="AIza..."
+                className="rounded-md border border-border bg-muted/30 px-3 py-1.5 text-sm font-mono"
+              />
+              <p className="text-xs text-muted-foreground">
+                Get a key from aistudio.google.com. Configured on the server via AGITO_GEMINI_API_KEY env var.
+              </p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gemini-model" className="text-sm">Model</Label>
+              <select
+                id="gemini-model"
+                value={geminiModel}
+                onChange={(e) => setGeminiModel(e.target.value)}
+                className="rounded-md border border-border bg-muted/30 px-3 py-1.5 text-sm"
+              >
+                <option value="gemini-2.0-flash-preview-image-generation">gemini-2.0-flash-preview-image-generation</option>
+                <option value="gemini-2.5-flash-image">gemini-2.5-flash-image (budget)</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={saveAiSettings}>
+                Save
+              </Button>
+              {settingsSaved && <span className="text-xs text-green-500">Saved</span>}
+            </div>
           </div>
         </section>
 
