@@ -114,7 +114,12 @@ export default function App(): JSX.Element {
       if (!dragData) return
 
       const { gridCols, gridRows } = useRoomStore.getState()
-      const rect = e.currentTarget.getBoundingClientRect()
+
+      // Find the actual canvas element inside the container for accurate positioning
+      const containerRect = e.currentTarget.getBoundingClientRect()
+      const canvas = e.currentTarget.querySelector('canvas')
+      const rect = canvas ? canvas.getBoundingClientRect() : containerRect
+
       const cellSize = Math.min(
         Math.floor(rect.width / gridCols),
         Math.floor(rect.height / gridRows)
