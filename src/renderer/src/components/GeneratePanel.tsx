@@ -21,7 +21,7 @@ export function GeneratePanel(): JSX.Element {
   const [category, setCategory] = useState<AssetCategory>('skin')
   const [prompt, setPrompt] = useState('')
   const [view, setView] = useState<'3/4' | 'iso'>('3/4')
-  const [batchCount, setBatchCount] = useState(2)
+  const [batchCount, setBatchCount] = useState(4)
   const [templateId, setTemplateId] = useState<string | null>(null)
   const [templates, setTemplates] = useState<TemplateInfo[]>([])
   const [sourceImage, setSourceImage] = useState<string | null>(null)
@@ -242,7 +242,7 @@ export function GeneratePanel(): JSX.Element {
           <div className="space-y-1.5">
             <Label className="text-sm">Batch Count</Label>
             <div className="flex gap-1.5">
-              {[1, 2, 3, 4, 5].map((n) => (
+              {[4, 8, 12, 16, 20].map((n) => (
                 <button
                   key={n}
                   className={`flex-1 rounded-md py-2 text-xs font-medium transition-colors ${
