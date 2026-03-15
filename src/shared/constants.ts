@@ -33,7 +33,7 @@ export const SUPPORTED_ENGINES = ['claude-code', 'codex'] as const
 export const SETTINGS_FILE = 'settings.json'
 export const DEFAULT_SETTINGS = {
   geminiApiKey: '',
-  geminiModel: 'gemini-2.0-flash-preview-image-generation',
+  geminiModel: 'gemini-3.1-flash-image-preview',
   apiBaseUrl: 'http://localhost:8000',
   defaultSpriteSize: 64,
 } as const

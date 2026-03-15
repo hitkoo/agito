@@ -176,8 +176,9 @@ export function SettingsPanel(): JSX.Element {
                 onChange={(e) => setGeminiModel(e.target.value)}
                 className="rounded-md border border-border bg-muted/30 px-3 py-1.5 text-sm"
               >
-                <option value="gemini-2.0-flash-preview-image-generation">gemini-2.0-flash-preview-image-generation</option>
-                <option value="gemini-2.5-flash-image">gemini-2.5-flash-image (budget)</option>
+                <option value="gemini-3.1-flash-image-preview">Nano Banana 2 (gemini-3.1-flash)</option>
+                <option value="gemini-3-pro-image-preview">Nano Banana Pro (gemini-3-pro)</option>
+                <option value="gemini-2.5-flash-image">Nano Banana (gemini-2.5-flash, budget)</option>
               </select>
             </div>
             <div className="flex items-center gap-2">
