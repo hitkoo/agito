@@ -1,15 +1,8 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import { Button } from './ui/button'
 import { Label } from './ui/label'
-import type { AssetCategory, AssetGenerateResult } from '../../../shared/types'
-
-interface TemplateInfo {
-  id: string
-  label: string
-  category: string
-  prompt: string
-}
+import type { AssetCategory } from '../../../shared/types'
 
 interface GenerateResultItem {
   image_base64: string
@@ -22,35 +15,12 @@ export function GeneratePanel(): JSX.Element {
   const [prompt, setPrompt] = useState('')
   const [view, setView] = useState<'3/4' | 'iso'>('3/4')
   const [boost, setBoost] = useState(false)
-  const [templateId, setTemplateId] = useState<string | null>(null)
-  const [templates, setTemplates] = useState<TemplateInfo[]>([])
   const [sourceImage, setSourceImage] = useState<string | null>(null)
   const [sourcePreview, setSourcePreview] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [statusText, setStatusText] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [results, setResults] = useState<GenerateResultItem[]>([])
-
-  // Load templates from server via IPC
-  useEffect(() => {
-    window.api
-      .invoke<TemplateInfo[]>(IPC_COMMANDS.ASSET_LIST_TEMPLATES)
-      .then((data) => setTemplates(data ?? []))
-      .catch(() => {})
-  }, [])
-
-  const filteredTemplates = templates.filter((t) => t.category === category)
-
-  const handleTemplateSelect = useCallback(
-    (id: string) => {
-      const tmpl = templates.find((t) => t.id === id)
-      if (tmpl) {
-        setTemplateId(id)
-        setPrompt(tmpl.prompt)
-      }
-    },
-    [templates]
-  )
 
   const handleGenerate = useCallback(async () => {
     if (!prompt.trim()) {
@@ -77,7 +47,6 @@ export function GeneratePanel(): JSX.Element {
         height: 512,
         view: (category === 'skin' || category === 'furniture') ? view : undefined,
         source_image: category === 'skin' ? sourceImage : undefined,
-        template_id: templateId,
         batch_count: batchCount,
       })
 
@@ -96,12 +65,11 @@ export function GeneratePanel(): JSX.Element {
     } finally {
       setGenerating(false)
     }
-  }, [category, prompt, view, boost, templateId])
+  }, [category, prompt, view, boost, sourceImage])
 
   const handleSave = useCallback(
     async (item: GenerateResultItem) => {
       if (!item.relativePath) return
-      // Already saved by server, just notify
       setStatusText(`Saved: ${item.filename}`)
     },
     []
@@ -128,10 +96,7 @@ export function GeneratePanel(): JSX.Element {
                       ? 'bg-primary text-primary-foreground'
                       : 'bg-muted text-muted-foreground hover:text-foreground'
                   }`}
-                  onClick={() => {
-                    setCategory(cat)
-                    setTemplateId(null)
-                  }}
+                  onClick={() => setCategory(cat)}
                 >
                   {cat === 'skin' ? 'Skin' : cat === 'furniture' ? 'Furniture' : 'Background'}
                 </button>
@@ -161,36 +126,12 @@ export function GeneratePanel(): JSX.Element {
             </div>
           )}
 
-          {/* Template */}
-          {filteredTemplates.length > 0 && (
-            <div className="space-y-1.5">
-              <Label className="text-sm">Template</Label>
-              <select
-                value={templateId || ''}
-                onChange={(e) =>
-                  e.target.value ? handleTemplateSelect(e.target.value) : setTemplateId(null)
-                }
-                className="w-full rounded-md border border-border bg-muted/30 px-3 py-2 text-sm"
-              >
-                <option value="">Custom prompt</option>
-                {filteredTemplates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
           {/* Prompt */}
           <div className="space-y-1.5">
             <Label className="text-sm">Prompt</Label>
             <textarea
               value={prompt}
-              onChange={(e) => {
-                setPrompt(e.target.value)
-                setTemplateId(null)
-              }}
+              onChange={(e) => setPrompt(e.target.value)}
               placeholder={
                 category === 'background'
                   ? 'e.g., cozy office with warm lighting'

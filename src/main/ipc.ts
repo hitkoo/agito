@@ -434,15 +434,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
   const getApiBaseUrl = (): string => process.env.AGITO_API_URL || 'http://localhost:8000'
 
-  ipcMain.handle(IPC_COMMANDS.ASSET_LIST_TEMPLATES, async () => {
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/api/templates`, { signal: AbortSignal.timeout(10_000) })
-      if (!res.ok) return []
-      return await res.json()
-    } catch {
-      return []
-    }
-  })
+
 
 
   ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE, async (_, req: AssetGenerateRequest) => {
