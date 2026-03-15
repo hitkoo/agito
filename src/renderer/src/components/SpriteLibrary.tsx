@@ -76,7 +76,7 @@ export function SpriteLibrary({ onSelect, currentSprite }: SpriteLibraryProps): 
       ) : sprites.length === 0 ? (
         <p className="text-xs text-muted-foreground">No sprites found. Upload one to get started.</p>
       ) : (
-        <div className="grid grid-cols-4 gap-2 max-h-[300px] overflow-y-auto pr-1">
+        <div className="grid grid-cols-4 gap-2 max-h-[300px] overflow-y-auto styled-scroll pr-1">
           {sprites.map((entry) => (
             <button
               key={entry.relativePath}

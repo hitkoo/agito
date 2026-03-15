@@ -63,7 +63,7 @@ function SkinGrid({ currentSkin, onSelect }: SkinGridProps): ReactElement {
   }
 
   return (
-    <div className="grid grid-cols-5 gap-1.5 max-h-[200px] overflow-y-auto">
+    <div className="grid grid-cols-5 gap-1.5 max-h-[200px] overflow-y-auto styled-scroll">
       {skins.map((skin) => {
         const preview = previews.get(skin.relativePath)
         const isSelected = currentSkin === `assets/${skin.relativePath}`
@@ -343,14 +343,14 @@ function EditDetailPanel({
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto">
+    <div className="flex flex-1 flex-col overflow-y-auto styled-scroll">
       {/* Header */}
       <div className="border-b border-border p-4">
         <h2 className="text-base font-semibold">Edit: {character.name}</h2>
       </div>
 
       {/* Form */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-5">
+      <div className="flex-1 overflow-y-auto styled-scroll p-4 space-y-5">
         {/* Name */}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="cp-edit-name">Name</Label>
@@ -498,7 +498,7 @@ export function CharactersPanel(): ReactElement {
         </div>
 
         {/* Character list */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        <div className="flex-1 overflow-y-auto styled-scroll p-3 space-y-2">
           {characters.length === 0 ? (
             <p className="text-xs text-muted-foreground text-center py-8">
               No characters yet. Click &quot;+ New&quot; to create one.

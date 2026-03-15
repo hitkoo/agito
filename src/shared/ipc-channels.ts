@@ -28,6 +28,7 @@ export const IPC_COMMANDS = {
   SESSION_START: 'session:start',
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
+  SESSION_SCAN: 'session:scan',
 
   // Engine
   ENGINE_DETECT_CLI: 'engine:detect-cli',

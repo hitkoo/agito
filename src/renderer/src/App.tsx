@@ -55,7 +55,7 @@ async function calcFootprintFromAsset(
 import { useIPCSync } from './hooks/useIPC'
 import { useTheme, getPersistedTheme } from './hooks/useTheme'
 import { OfficeCanvas } from './world/OfficeCanvas'
-import { CharacterPanel } from './panel/CharacterPanel'
+import { TerminalDock } from './panel/TerminalDock'
 import { CharacterContextMenu } from './components/CharacterContextMenu'
 import { CharactersPanel } from './components/CharactersPanel'
 import { Sidebar } from './components/Sidebar'
@@ -63,10 +63,9 @@ import { ItemPalette } from './components/ItemPalette'
 import { LayoutContextMenu } from './components/LayoutContextMenu'
 import { SettingsPanel } from './components/SettingsPanel'
 import { GeneratePanel } from './components/GeneratePanel'
+import { Toaster } from 'sonner'
 
 export default function App(): JSX.Element {
-  const selectedCharacterId = useUIStore((s) => s.selectedCharacterId)
-  const selectCharacter = useUIStore((s) => s.selectCharacter)
   const activeTab = useUIStore((s) => s.activeTab)
   const setTheme = useUIStore((s) => s.setTheme)
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
@@ -83,17 +82,6 @@ export default function App(): JSX.Element {
     loadCharacters()
     loadRoom()
   }, [loadCharacters, loadRoom])
-
-  useEffect(() => {
-    if (activeTab !== 'runtime') return
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && selectedCharacterId !== null) {
-        selectCharacter(null)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeTab, selectedCharacterId, selectCharacter])
 
   const setDraggingManifestId = useUIStore((s) => s.setDraggingManifestId)
 
@@ -165,6 +153,7 @@ export default function App(): JSX.Element {
 
   return (
     <div className="flex h-full w-full">
+      <Toaster position="top-center" richColors theme="dark" />
       <Sidebar />
       <main className="flex-1 flex h-full overflow-hidden relative">
         <div
@@ -174,20 +163,10 @@ export default function App(): JSX.Element {
         >
           <OfficeCanvas />
 
-          {activeTab === 'runtime' && (
-            <>
-              {selectedCharacterId !== null && (
-                <div
-                  onClick={() => selectCharacter(null)}
-                  className="absolute inset-0 bg-black/40 z-[50]"
-                />
-              )}
-              {selectedCharacterId && (
-                <CharacterPanel characterId={selectedCharacterId} />
-              )}
-              <CharacterContextMenu />
-            </>
-          )}
+          {activeTab === 'runtime' && <CharacterContextMenu />}
+
+          {/* Terminal dock — overlay on canvas, visible in any tab */}
+          <TerminalDock />
 
           {activeTab === 'layout' && <LayoutContextMenu />}
         </div>

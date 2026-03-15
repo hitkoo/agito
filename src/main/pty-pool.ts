@@ -10,6 +10,8 @@ interface PtyProcess {
 
 export class PtyPool {
   private processes = new Map<string, PtyProcess>()
+  // Preserve output buffer after PTY exits (for error log display)
+  private deadBuffers = new Map<string, string>()
 
   spawn(
     characterId: string,
@@ -18,6 +20,7 @@ export class PtyPool {
     cwd: string
   ): pty.IPty {
     this.kill(characterId)
+    this.deadBuffers.delete(characterId)
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const nodePty = require('node-pty') as typeof pty
@@ -41,6 +44,8 @@ export class PtyPool {
     })
 
     proc.onExit(() => {
+      // Preserve buffer for error log before removing
+      this.deadBuffers.set(characterId, entry.outputBuffer)
       this.processes.delete(characterId)
     })
 
@@ -48,7 +53,10 @@ export class PtyPool {
   }
 
   getOutputBuffer(characterId: string): string {
-    return this.processes.get(characterId)?.outputBuffer ?? ''
+    // Check live processes first, then dead buffers
+    return this.processes.get(characterId)?.outputBuffer
+      ?? this.deadBuffers.get(characterId)
+      ?? ''
   }
 
   write(characterId: string, data: string): void {
@@ -75,5 +83,9 @@ export class PtyPool {
 
   isAlive(characterId: string): boolean {
     return this.processes.has(characterId)
+  }
+
+  clearDeadBuffer(characterId: string): void {
+    this.deadBuffers.delete(characterId)
   }
 }

@@ -83,7 +83,7 @@ export function GeneratePanel(): JSX.Element {
           <h2 className="text-lg font-semibold">Generate</h2>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto styled-scroll p-4 space-y-4">
           {/* Category */}
           <div className="space-y-1.5">
             <Label className="text-sm">Category</Label>
@@ -207,7 +207,7 @@ export function GeneratePanel(): JSX.Element {
       </div>
 
       {/* Right: Results Grid */}
-      <div className="flex-1 h-full overflow-y-auto p-6">
+      <div className="flex-1 h-full overflow-y-auto styled-scroll p-6">
         {results.length === 0 ? (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             Generated images will appear here

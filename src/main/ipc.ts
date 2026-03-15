@@ -1,8 +1,9 @@
-import { ipcMain, BrowserWindow, dialog } from 'electron'
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from 'fs'
+import { ipcMain, BrowserWindow, dialog, app } from 'electron'
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, copyFileSync, statSync } from 'fs'
 import { join, basename, extname } from 'path'
+import { homedir } from 'os'
 import { IPC_COMMANDS, IPC_EVENTS } from '../shared/ipc-channels'
-import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, AssetGenerateRequest, AssetGenerateResult } from '../shared/types'
+import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, AssetGenerateRequest, AssetGenerateResult, ScannedSession } from '../shared/types'
 import type { AgitoStore } from './store'
 import { PtyPool } from './pty-pool'
 import { StatusDetector } from './status-detector'
@@ -10,6 +11,38 @@ import { GRID_COLS, GRID_ROWS, FOOTPRINTS, MAX_SESSION_HISTORY, ASSETS_DIR } fro
 import type { EngineAdapter } from './engine/types'
 import { claudeCodeAdapter } from './engine/claude-code'
 import { codexAdapter } from './engine/codex'
+
+// 16ms PTY output batching (~60fps) to prevent xterm.js write() flooding
+const PTY_BATCH_MS = 16
+const pendingPtyData = new Map<string, string[]>()
+const ptyFlushTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function batchPtyData(characterId: string, data: string, broadcast: (event: string, payload: unknown) => void): void {
+  if (!pendingPtyData.has(characterId)) pendingPtyData.set(characterId, [])
+  pendingPtyData.get(characterId)!.push(data)
+
+  if (!ptyFlushTimers.has(characterId)) {
+    ptyFlushTimers.set(characterId, setTimeout(() => {
+      const chunks = pendingPtyData.get(characterId) ?? []
+      const merged = chunks.join('')
+      broadcast(IPC_EVENTS.PTY_DATA, { characterId, data: merged })
+      pendingPtyData.delete(characterId)
+      ptyFlushTimers.delete(characterId)
+    }, PTY_BATCH_MS))
+  }
+}
+
+function flushPtyData(characterId: string, broadcast: (event: string, payload: unknown) => void): void {
+  const timer = ptyFlushTimers.get(characterId)
+  if (timer) clearTimeout(timer)
+  ptyFlushTimers.delete(characterId)
+
+  const chunks = pendingPtyData.get(characterId)
+  if (chunks && chunks.length > 0) {
+    broadcast(IPC_EVENTS.PTY_DATA, { characterId, data: chunks.join('') })
+  }
+  pendingPtyData.delete(characterId)
+}
 
 export function registerIPCHandlers(store: AgitoStore): void {
   const ptyPool = new PtyPool()
@@ -43,7 +76,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const pty = ptyPool.spawn(characterId, args.command, args.args, args.cwd)
 
       pty.onData((data) => {
-        broadcastToAll(IPC_EVENTS.PTY_DATA, { characterId, data })
+        batchPtyData(characterId, data, broadcastToAll)
         statusDetector.feedData(characterId, data)
       })
 
@@ -51,10 +84,11 @@ export function registerIPCHandlers(store: AgitoStore): void {
         broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, { characterId, status })
       })
 
-      pty.onExit(({ exitCode }) => {
+      pty.onExit(() => {
+        flushPtyData(characterId, broadcastToAll)
         broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
           characterId,
-          status: exitCode === 0 ? 'done' : 'error',
+          status: 'disconnected',
         })
       })
 
@@ -139,6 +173,10 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const { nanoid } = await import('nanoid')
       const { characterId, workingDirectory } = args
 
+      if (!existsSync(workingDirectory)) {
+        throw new Error(`Working directory not found: ${workingDirectory}`)
+      }
+
       const characters = store.getCharacters()
       const character = characters.find((c) => c.id === characterId)
       if (!character) throw new Error(`Character not found: ${characterId}`)
@@ -159,7 +197,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const pty = ptyPool.spawn(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
 
       pty.onData((data) => {
-        broadcastToAll(IPC_EVENTS.PTY_DATA, { characterId, data })
+        batchPtyData(characterId, data, broadcastToAll)
         statusDetector.feedData(characterId, data)
       })
 
@@ -168,6 +206,8 @@ export function registerIPCHandlers(store: AgitoStore): void {
       })
 
       pty.onExit(({ exitCode }) => {
+        flushPtyData(characterId, broadcastToAll)
+        statusDetector.detach(characterId)
         broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
           characterId,
           status: exitCode === 0 ? 'done' : 'error',
@@ -222,12 +262,17 @@ export function registerIPCHandlers(store: AgitoStore): void {
         }
       }
 
+      // Validate working directory exists
+      if (!existsSync(workingDirectory)) {
+        throw new Error(`Working directory not found: ${workingDirectory}`)
+      }
+
       const spawnArgs = adapter.buildSpawnArgs({ sessionId, soulPath: soulContent, workingDirectory })
 
       const pty = ptyPool.spawn(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
 
       pty.onData((data) => {
-        broadcastToAll(IPC_EVENTS.PTY_DATA, { characterId, data })
+        batchPtyData(characterId, data, broadcastToAll)
         statusDetector.feedData(characterId, data)
       })
 
@@ -236,6 +281,8 @@ export function registerIPCHandlers(store: AgitoStore): void {
       })
 
       pty.onExit(({ exitCode }) => {
+        flushPtyData(characterId, broadcastToAll)
+        statusDetector.detach(characterId)
         broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
           characterId,
           status: exitCode === 0 ? 'done' : 'error',
@@ -275,6 +322,89 @@ export function registerIPCHandlers(store: AgitoStore): void {
     )
     store.saveCharacters(updatedCharacters)
     broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
+  })
+
+  // --- Session scan (discover external CLI sessions) ---
+
+  ipcMain.handle(IPC_COMMANDS.SESSION_SCAN, async () => {
+    const results: ScannedSession[] = []
+
+    // Scan Claude Code sessions: ~/.claude/projects/<encoded-dir>/*.jsonl
+    try {
+      const claudeProjectsDir = join(homedir(), '.claude', 'projects')
+      if (existsSync(claudeProjectsDir)) {
+        const dirs = readdirSync(claudeProjectsDir, { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+        for (const dir of dirs) {
+          const dirPath = join(claudeProjectsDir, dir.name)
+          // Decode working directory from folder name (e.g. "-Users-foo-project" → "/Users/foo/project")
+          const workDir = dir.name.replace(/^-/, '/').replace(/-/g, '/')
+          try {
+            const files = readdirSync(dirPath)
+              .filter((f) => f.endsWith('.jsonl') && !f.startsWith('agent-'))
+            for (const file of files) {
+              try {
+                const filePath = join(dirPath, file)
+                const firstLine = readFileSync(filePath, 'utf-8').split('\n')[0]
+                if (!firstLine) continue
+                const meta = JSON.parse(firstLine)
+                if (!meta.sessionId) continue
+                const stat = statSync(filePath)
+                results.push({
+                  sessionId: meta.sessionId,
+                  engineType: 'claude-code',
+                  workingDirectory: meta.cwd || workDir,
+                  label: meta.gitBranch || basename(workDir),
+                  createdAt: meta.timestamp || stat.birthtime.toISOString(),
+                  lastActiveAt: stat.mtime.toISOString(),
+                })
+              } catch {
+                // skip unparseable files
+              }
+            }
+          } catch {
+            // skip unreadable dirs
+          }
+        }
+      }
+    } catch {
+      // Claude CLI not installed
+    }
+
+    // Scan Codex sessions: ~/.codex/session_index.jsonl
+    try {
+      const codexIndex = join(homedir(), '.codex', 'session_index.jsonl')
+      if (existsSync(codexIndex)) {
+        const lines = readFileSync(codexIndex, 'utf-8').split('\n').filter(Boolean)
+        for (const line of lines) {
+          try {
+            const entry = JSON.parse(line)
+            if (!entry.id) continue
+            results.push({
+              sessionId: entry.id,
+              engineType: 'codex',
+              workingDirectory: entry.cwd || '',
+              label: entry.thread_name || entry.id.slice(0, 8),
+              createdAt: entry.updated_at || '',
+              lastActiveAt: entry.updated_at,
+            })
+          } catch {
+            // skip unparseable lines
+          }
+        }
+      }
+    } catch {
+      // Codex CLI not installed
+    }
+
+    // Sort by lastActiveAt descending (most recent first)
+    results.sort((a, b) => {
+      const ta = a.lastActiveAt || a.createdAt
+      const tb = b.lastActiveAt || b.createdAt
+      return tb.localeCompare(ta)
+    })
+
+    return results
   })
 
   // --- Engine detection ---
@@ -527,10 +657,20 @@ export function registerIPCHandlers(store: AgitoStore): void {
         workingDirectory: session.workingDirectory,
       })
 
+      // Skip if working directory no longer exists
+      if (!existsSync(session.workingDirectory)) {
+        store.saveCharacters(
+          store.getCharacters().map((c) =>
+            c.id === char.id ? { ...c, currentSessionId: null, status: 'idle' as const } : c
+          )
+        )
+        continue
+      }
+
       const pty = ptyPool.spawn(char.id, adapter.cliCommand, spawnArgs, session.workingDirectory)
 
       pty.onData((ptyData) => {
-        broadcastToAll(IPC_EVENTS.PTY_DATA, { characterId: char.id, data: ptyData })
+        batchPtyData(char.id, ptyData, broadcastToAll)
         statusDetector.feedData(char.id, ptyData)
       })
 
@@ -539,6 +679,8 @@ export function registerIPCHandlers(store: AgitoStore): void {
       })
 
       pty.onExit(({ exitCode }) => {
+        flushPtyData(char.id, broadcastToAll)
+        statusDetector.detach(char.id)
         broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
           characterId: char.id,
           status: exitCode === 0 ? 'done' : 'error',

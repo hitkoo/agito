@@ -426,6 +426,68 @@ function WaitingEffect({ w, h, color }: { w: number; h: number; color: number })
 }
 
 // ---------------------------------------------------------------------------
+// StatusBadge — pill above character showing status when skin is present
+// ---------------------------------------------------------------------------
+
+const STATUS_BADGE_EMOJI: Record<string, string> = {
+  working: '\u{26A1}',
+  error: '\u{2757}',
+  done: '\u{2705}',
+  waiting: '\u{1F4AD}',
+}
+
+function StatusBadge({
+  status,
+  w,
+}: {
+  status: string
+  w: number
+}): ReactElement | null {
+  if (status === 'idle') return null
+
+  const emoji = STATUS_BADGE_EMOJI[status] || ''
+  const color = STATUS_COLORS[status as keyof typeof STATUS_COLORS] ?? STATUS_COLORS.idle
+
+  const badgeLabelStyle = useMemo(
+    () =>
+      new TextStyle({
+        fontSize: Math.max(8, Math.min(11, w * 0.2)),
+        fill: 0xffffff,
+        fontFamily: 'monospace',
+        fontWeight: 'bold',
+      }),
+    [w]
+  )
+
+  const pillW = Math.max(40, w * 0.7)
+  const pillH = 16
+  const pillX = (w - pillW) / 2
+
+  const drawPill = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(color, 0.85)
+      g.drawRoundedRect(pillX, -pillH - 6, pillW, pillH, pillH / 2)
+      g.endFill()
+    },
+    [color, pillX, pillW, pillH]
+  )
+
+  return (
+    <>
+      <Graphics draw={drawPill} />
+      <Text
+        text={`${emoji} ${status}`}
+        x={w / 2}
+        y={-pillH / 2 - 6}
+        anchor={{ x: 0.5, y: 0.5 }}
+        style={badgeLabelStyle}
+      />
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // SelectionBorder — dashed border around selected item
 // ---------------------------------------------------------------------------
 
@@ -706,16 +768,6 @@ function FurnitureSprite({
     [w, h, fillColor, borderColor]
   )
 
-  const labelStyle = useMemo(
-    () =>
-      new TextStyle({
-        fontSize: Math.max(8, cellSize * 0.3),
-        fill: 0xe0e0e0,
-        fontFamily: 'monospace',
-      }),
-    [cellSize]
-  )
-
   const onPointerDown = useCallback(
     (e: import('pixi.js').FederatedPointerEvent) => {
       if (!isLayout) return
@@ -813,7 +865,7 @@ function FurnitureSprite({
       ) : (
         <Graphics draw={draw} />
       )}
-      <Text text={manifest.name} x={w / 2} y={h + 4} anchor={{ x: 0.5, y: 0 }} style={labelStyle} />
+      {/* No label for furniture/background on canvas */}
       {showHandles && (
         <>
           <SelectionBorder w={w} h={h} />
@@ -896,12 +948,6 @@ function CharacterSprite({
       }),
     [cellSize]
   )
-
-  const drawBorderGlow = useCallback((g: PixiGraphics) => {
-    g.clear()
-    g.lineStyle(3, color, 0.7)
-    g.drawRoundedRect(0, 0, w, h, 6)
-  }, [w, h, color])
 
   const statusEffect = useMemo((): ReactElement => {
     switch (character.status) {
@@ -1034,10 +1080,10 @@ function CharacterSprite({
       pointerout={isLayout ? () => { if (!isResizingChar.current) setIsHoveredChar(false) } : undefined}
     >
       {texture ? (
-        <Container>
+        <>
           <Sprite texture={texture} width={w} height={h} />
-          <Graphics draw={drawBorderGlow} />
-        </Container>
+          <StatusBadge status={character.status} w={w} />
+        </>
       ) : (
         statusEffect
       )}
@@ -1088,7 +1134,7 @@ export function OfficeCanvas(): ReactElement {
   const stageH = cellSize * gridRows
 
   const characters = useCharacterStore((s) => s.characters)
-  const selectCharacter = useUIStore((s) => s.selectCharacter)
+  const openTerminalDock = useUIStore((s) => s.openTerminalDock)
   const openContextMenu = useUIStore((s) => s.openContextMenu)
   const activeTab = useUIStore((s) => s.activeTab)
   const theme = useUIStore((s) => s.theme)
@@ -1246,7 +1292,7 @@ export function OfficeCanvas(): ReactElement {
               key={char.id}
               character={char}
               cellSize={cellSize}
-              onSelect={selectCharacter}
+              onSelect={(id) => { if (id) openTerminalDock(id) }}
               onRightClick={openContextMenu}
               activeTab={activeTab}
               isSelected={selectedLayoutItem?.type === 'character' && selectedLayoutItem.id === char.id}

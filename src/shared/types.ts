@@ -80,6 +80,17 @@ export interface SessionMapping {
   lastActiveAt: string
 }
 
+// --- Scanned Session (external CLI sessions) ---
+
+export interface ScannedSession {
+  sessionId: string
+  engineType: EngineType
+  workingDirectory: string
+  label: string // thread_name (codex) or gitBranch (claude)
+  createdAt: string
+  lastActiveAt?: string
+}
+
 // --- Store Data ---
 
 export interface AgitoPersistentData {

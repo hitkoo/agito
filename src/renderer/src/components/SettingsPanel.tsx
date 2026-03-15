@@ -57,7 +57,7 @@ export function SettingsPanel(): JSX.Element {
   }, [])
 
   return (
-    <div className="absolute inset-0 z-10 flex items-start justify-center overflow-y-auto bg-black/40 p-8">
+    <div className="absolute inset-0 z-10 flex items-start justify-center overflow-y-auto styled-scroll bg-black/40 p-8">
       <div className="w-full max-w-2xl rounded-lg border border-border bg-background p-6 space-y-6">
         <h2 className="text-lg font-semibold">Settings</h2>
 

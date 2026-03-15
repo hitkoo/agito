@@ -334,7 +334,7 @@ export function ItemPalette(): JSX.Element {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+      <div className="flex-1 overflow-y-auto styled-scroll p-3 space-y-3">
         {loading ? (
           <p className="text-xs text-muted-foreground">Loading sprites...</p>
         ) : (
