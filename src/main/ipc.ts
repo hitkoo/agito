@@ -453,7 +453,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req),
-        signal: AbortSignal.timeout(120_000),
+        signal: AbortSignal.timeout(300_000),
       })
 
       if (!res.ok) {
@@ -467,6 +467,8 @@ export function registerIPCHandlers(store: AgitoStore): void {
         error?: string
         duration_ms?: number
       }
+
+      console.log('[ASSET_GENERATE] Server response:', { success: result.success, resultCount: result.results?.length, error: result.error, duration_ms: result.duration_ms })
 
       if (result.success && result.results) {
         // Save each generated image to local assets
