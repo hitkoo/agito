@@ -92,9 +92,6 @@ export interface AgitoPersistentData {
 // --- Settings ---
 
 export interface AgitoSettings {
-  geminiApiKey: string
-  geminiModel: string
-  apiBaseUrl: string
   defaultSpriteSize: number
 }
 

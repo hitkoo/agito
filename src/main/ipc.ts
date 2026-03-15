@@ -430,11 +430,23 @@ export function registerIPCHandlers(store: AgitoStore): void {
     broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'settings' })
   })
 
-  // --- Sprite Generation (via agito-server) ---
+  // --- Asset Generation (via agito-server) ---
 
-  ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE, async (_, req: AssetGenerateRequest): Promise<AssetGenerateResult> => {
-    const settings = store.getSettings()
-    const baseUrl = settings.apiBaseUrl || 'http://localhost:8000'
+  const getApiBaseUrl = (): string => process.env.AGITO_API_URL || 'http://localhost:8000'
+
+  ipcMain.handle(IPC_COMMANDS.ASSET_LIST_TEMPLATES, async () => {
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/templates`, { signal: AbortSignal.timeout(10_000) })
+      if (!res.ok) return []
+      return await res.json()
+    } catch {
+      return []
+    }
+  })
+
+
+  ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE, async (_, req: AssetGenerateRequest) => {
+    const baseUrl = getApiBaseUrl()
 
     try {
       const res = await fetch(`${baseUrl}/api/generate`, {
@@ -449,22 +461,33 @@ export function registerIPCHandlers(store: AgitoStore): void {
         return { success: false, error: `Server error ${res.status}: ${text}` }
       }
 
-      const result = await res.json() as { success: boolean; image_base64?: string; filename?: string; error?: string; duration_ms?: number }
+      const result = await res.json() as {
+        success: boolean
+        results?: { success: boolean; image_base64?: string; filename?: string; error?: string }[]
+        error?: string
+        duration_ms?: number
+      }
 
-      if (result.success && result.image_base64 && result.filename) {
-        // Save the generated image to local assets
-        const buf = Buffer.from(result.image_base64, 'base64')
+      if (result.success && result.results) {
+        // Save each generated image to local assets
         const destDir = join(store.getBasePath(), ASSETS_DIR, 'custom', req.category)
         if (!existsSync(destDir)) {
           mkdirSync(destDir, { recursive: true })
         }
-        const destPath = join(destDir, result.filename)
-        writeFileSync(destPath, buf)
+
+        for (const item of result.results) {
+          if (item.success && item.image_base64 && item.filename) {
+            const buf = Buffer.from(item.image_base64, 'base64')
+            writeFileSync(join(destDir, item.filename), buf)
+          }
+        }
 
         return {
           success: true,
-          relativePath: `custom/${req.category}/${result.filename}`,
-          filename: result.filename,
+          results: result.results.map((item) => ({
+            ...item,
+            relativePath: item.filename ? `custom/${req.category}/${item.filename}` : undefined,
+          })),
           duration_ms: result.duration_ms,
         }
       }

@@ -62,6 +62,7 @@ import { Sidebar } from './components/Sidebar'
 import { ItemPalette } from './components/ItemPalette'
 import { LayoutContextMenu } from './components/LayoutContextMenu'
 import { SettingsPanel } from './components/SettingsPanel'
+import { GeneratePanel } from './components/GeneratePanel'
 
 export default function App(): JSX.Element {
   const selectedCharacterId = useUIStore((s) => s.selectedCharacterId)
@@ -192,6 +193,8 @@ export default function App(): JSX.Element {
         </div>
 
         {activeTab === 'layout' && <ItemPalette />}
+
+        {activeTab === 'generate' && <GeneratePanel />}
 
         {activeTab === 'characters' && <CharactersPanel />}
 

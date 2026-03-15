@@ -48,6 +48,7 @@ export const IPC_COMMANDS = {
 
   // Asset generation (via agito-server)
   ASSET_GENERATE: 'asset:generate',
+  ASSET_LIST_TEMPLATES: 'asset:list-templates',
 
   // Settings
   SETTINGS_READ: 'settings:read',
