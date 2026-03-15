@@ -21,7 +21,7 @@ export function GeneratePanel(): JSX.Element {
   const [category, setCategory] = useState<AssetCategory>('skin')
   const [prompt, setPrompt] = useState('')
   const [view, setView] = useState<'3/4' | 'iso'>('3/4')
-  const [batchCount, setBatchCount] = useState(4)
+  const [boost, setBoost] = useState(false)
   const [templateId, setTemplateId] = useState<string | null>(null)
   const [templates, setTemplates] = useState<TemplateInfo[]>([])
   const [sourceImage, setSourceImage] = useState<string | null>(null)
@@ -61,7 +61,8 @@ export function GeneratePanel(): JSX.Element {
     setGenerating(true)
     setError(null)
     setResults([])
-    setStatusText(`Generating ${batchCount} image${batchCount > 1 ? 's' : ''}...`)
+    const batchCount = boost ? 20 : 4
+    setStatusText(boost ? 'Generating ×5 boost...' : 'Generating...')
 
     try {
       const result = await window.api.invoke<{
@@ -95,7 +96,7 @@ export function GeneratePanel(): JSX.Element {
     } finally {
       setGenerating(false)
     }
-  }, [category, prompt, view, batchCount, templateId])
+  }, [category, prompt, view, boost, templateId])
 
   const handleSave = useCallback(
     async (item: GenerateResultItem) => {
@@ -238,25 +239,16 @@ export function GeneratePanel(): JSX.Element {
             </div>
           )}
 
-          {/* Batch Count */}
-          <div className="space-y-1.5">
-            <Label className="text-sm">Batch Count</Label>
-            <div className="flex gap-1.5">
-              {[4, 8, 12, 16, 20].map((n) => (
-                <button
-                  key={n}
-                  className={`flex-1 rounded-md py-2 text-xs font-medium transition-colors ${
-                    batchCount === n
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:text-foreground'
-                  }`}
-                  onClick={() => setBatchCount(n)}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* Boost toggle */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={boost}
+              onChange={(e) => setBoost(e.target.checked)}
+              className="accent-primary"
+            />
+            <span className="text-sm">Boost mode (×5)</span>
+          </label>
 
           {/* Generate Button */}
           <Button
@@ -264,7 +256,7 @@ export function GeneratePanel(): JSX.Element {
             onClick={handleGenerate}
             disabled={generating || !prompt.trim()}
           >
-            {generating ? 'Generating...' : `Generate ${batchCount > 1 ? `(×${batchCount})` : ''}`}
+            {generating ? 'Generating...' : boost ? 'Generate (×5)' : 'Generate'}
           </Button>
 
           {/* Status / Error */}
