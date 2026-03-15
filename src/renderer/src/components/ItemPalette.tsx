@@ -1,10 +1,11 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
 import { Sparkles } from 'lucide-react'
 import { useUIStore } from '../stores/ui-store'
+import { useCharacterStore } from '../stores/character-store'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import { Button } from './ui/button'
 import { GenerateDialog } from './GenerateDialog'
-import type { ItemCategory, AssetCategory } from '../../../shared/types'
+import type { ItemCategory, AssetCategory, Character } from '../../../shared/types'
 
 // --- Types ---
 
@@ -83,6 +84,93 @@ function CollapsibleSection({ title, count, defaultOpen = true, children }: {
       </button>
       {open && children}
     </section>
+  )
+}
+
+// --- Character Placement List ---
+
+function CharacterPlacementList(): JSX.Element {
+  const characters = useCharacterStore((s) => s.characters)
+  const loadCharacters = useCharacterStore((s) => s.loadFromMain)
+
+  useEffect(() => { loadCharacters() }, [loadCharacters])
+
+  const handlePlace = useCallback(async (characterId: string) => {
+    await window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, characterId, { gridPosition: { x: 0, y: 0 } })
+    loadCharacters()
+  }, [loadCharacters])
+
+  const handleRemove = useCallback(async (characterId: string) => {
+    await window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, characterId, { gridPosition: null })
+    loadCharacters()
+  }, [loadCharacters])
+
+  if (characters.length === 0) {
+    return (
+      <div className="text-sm text-muted-foreground text-center py-8">
+        <p>No characters yet.</p>
+        <p className="mt-1">Create one in the Characters tab.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {characters.map((char: Character) => (
+        <CharacterPlacementCard
+          key={char.id}
+          character={char}
+          onPlace={handlePlace}
+          onRemove={handleRemove}
+        />
+      ))}
+    </div>
+  )
+}
+
+function CharacterPlacementCard({ character, onPlace, onRemove }: {
+  character: Character
+  onPlace: (id: string) => void
+  onRemove: (id: string) => void
+}): JSX.Element {
+  const preview = useSpritePreview(
+    character.skin
+      ? (character.skin.startsWith('assets/') ? character.skin.slice(7) : character.skin)
+      : ''
+  )
+  const isPlaced = character.gridPosition !== null
+
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-border bg-secondary/30 p-1.5">
+      <div className="w-10 h-10 rounded bg-muted/50 flex items-center justify-center overflow-hidden shrink-0">
+        {preview ? (
+          <img src={preview} alt={character.name} className="w-full h-full object-contain" style={{ imageRendering: 'pixelated' }} />
+        ) : (
+          <span className="text-lg text-muted-foreground/40">?</span>
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-medium truncate">{character.name}</p>
+        <p className="text-[10px] text-muted-foreground">
+          {isPlaced ? `Placed (${character.gridPosition!.x}, ${character.gridPosition!.y})` : 'Not placed'}
+        </p>
+      </div>
+      {isPlaced ? (
+        <button
+          onClick={() => onRemove(character.id)}
+          className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors shrink-0"
+        >
+          Remove
+        </button>
+      ) : (
+        <button
+          onClick={() => onPlace(character.id)}
+          className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 hover:bg-primary/20 text-primary transition-colors shrink-0"
+        >
+          Place
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -238,12 +326,7 @@ export function ItemPalette(): JSX.Element {
           <>
             {activeTab === 'background' && renderThemeGroups(tileGroups)}
             {activeTab === 'furniture' && renderThemeGroups(furnitureGroups)}
-            {activeTab === 'skin' && (
-              <div className="text-sm text-muted-foreground text-center py-8">
-                <p>Character sprites are managed via</p>
-                <p className="mt-1">Runtime tab → Right-click → Edit → Sprite</p>
-              </div>
-            )}
+            {activeTab === 'skin' && <CharacterPlacementList />}
           </>
         )}
       </div>
