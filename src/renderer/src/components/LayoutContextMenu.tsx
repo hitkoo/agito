@@ -62,7 +62,8 @@ export function LayoutContextMenu(): ReactElement | null {
     if (ctx.type === 'furniture') {
       useRoomStore.getState().removeItem(ctx.id)
     } else {
-      await window.api.invoke(IPC_COMMANDS.CHARACTER_DELETE, ctx.id)
+      // Unplace character (set gridPosition to null), don't delete it
+      await window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, ctx.id, { gridPosition: null })
       useCharacterStore.getState().loadFromMain()
     }
     useUIStore.getState().selectLayoutItem(null)

@@ -2,6 +2,7 @@ import { useEffect, useCallback } from 'react'
 import { useCharacterStore } from './stores/character-store'
 import { useRoomStore } from './stores/room-store'
 import { useUIStore } from './stores/ui-store'
+import { IPC_COMMANDS } from '../../shared/ipc-channels'
 import { useIPCSync } from './hooks/useIPC'
 import { useTheme, getPersistedTheme } from './hooks/useTheme'
 import { OfficeCanvas } from './world/OfficeCanvas'
@@ -56,20 +57,12 @@ export default function App(): JSX.Element {
   )
 
   const handleDrop = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
+    async (e: React.DragEvent<HTMLDivElement>) => {
       if (activeTab !== 'layout') return
       e.preventDefault()
 
-      const relativePath = e.dataTransfer.getData('text/plain')
-      if (!relativePath) return
-
-      // Derive category from path: "{theme}/{category}/{filename}"
-      const parts = relativePath.split('/')
-      const theme = parts[0] ?? 'custom'
-      const category = parts.length >= 2 ? parts[1] : 'furniture'
-
-      // Default footprints: office pack = 2x3, custom = 2x2
-      const footprint = theme === 'office' ? { w: 2, h: 3 } : { w: 2, h: 2 }
+      const dragData = e.dataTransfer.getData('text/plain')
+      if (!dragData) return
 
       const { gridCols, gridRows } = useRoomStore.getState()
       const rect = e.currentTarget.getBoundingClientRect()
@@ -78,26 +71,33 @@ export default function App(): JSX.Element {
         Math.floor(rect.height / gridRows)
       )
 
-      const gridX = Math.max(
-        0,
-        Math.min(
-          gridCols - footprint.w,
-          Math.floor((e.clientX - rect.left) / cellSize)
-        )
-      )
-      const gridY = Math.max(
-        0,
-        Math.min(
-          gridRows - footprint.h,
-          Math.floor((e.clientY - rect.top) / cellSize)
-        )
-      )
+      const calcGridPos = (fw: number, fh: number) => ({
+        x: Math.max(0, Math.min(gridCols - fw, Math.floor((e.clientX - rect.left) / cellSize))),
+        y: Math.max(0, Math.min(gridRows - fh, Math.floor((e.clientY - rect.top) / cellSize))),
+      })
+
+      // Character drag-and-drop placement
+      if (dragData.startsWith('__character__:')) {
+        const characterId = dragData.slice('__character__:'.length)
+        const fw = 2, fh = 2 // default character footprint
+        const pos = calcGridPos(fw, fh)
+        await window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, characterId, { gridPosition: pos })
+        useCharacterStore.getState().loadFromMain()
+        setDraggingManifestId(null)
+        return
+      }
+
+      // Furniture/background drag-and-drop
+      const parts = dragData.split('/')
+      const theme = parts[0] ?? 'custom'
+      const footprint = theme === 'office' ? { w: 2, h: 3 } : { w: 2, h: 2 }
+      const pos = calcGridPos(footprint.w, footprint.h)
 
       const id = crypto.randomUUID()
       useRoomStore.getState().addItem({
         id,
-        manifestId: relativePath,
-        position: { x: gridX, y: gridY },
+        manifestId: dragData,
+        position: pos,
         footprint,
       })
       setDraggingManifestId(null)

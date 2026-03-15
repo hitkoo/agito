@@ -92,18 +92,9 @@ function CollapsibleSection({ title, count, defaultOpen = true, children }: {
 function CharacterPlacementList(): JSX.Element {
   const characters = useCharacterStore((s) => s.characters)
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
+  const setDraggingManifestId = useUIStore((s) => s.setDraggingManifestId)
 
   useEffect(() => { loadCharacters() }, [loadCharacters])
-
-  const handlePlace = useCallback(async (characterId: string) => {
-    await window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, characterId, { gridPosition: { x: 0, y: 0 } })
-    loadCharacters()
-  }, [loadCharacters])
-
-  const handleRemove = useCallback(async (characterId: string) => {
-    await window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, characterId, { gridPosition: null })
-    loadCharacters()
-  }, [loadCharacters])
 
   if (characters.length === 0) {
     return (
@@ -120,18 +111,16 @@ function CharacterPlacementList(): JSX.Element {
         <CharacterPlacementCard
           key={char.id}
           character={char}
-          onPlace={handlePlace}
-          onRemove={handleRemove}
+          setDraggingManifestId={setDraggingManifestId}
         />
       ))}
     </div>
   )
 }
 
-function CharacterPlacementCard({ character, onPlace, onRemove }: {
+function CharacterPlacementCard({ character, setDraggingManifestId }: {
   character: Character
-  onPlace: (id: string) => void
-  onRemove: (id: string) => void
+  setDraggingManifestId: (id: string | null) => void
 }): JSX.Element {
   const preview = useSpritePreview(
     character.skin
@@ -140,8 +129,21 @@ function CharacterPlacementCard({ character, onPlace, onRemove }: {
   )
   const isPlaced = character.gridPosition !== null
 
+  const handleDragStart = useCallback((e: React.DragEvent) => {
+    // Use a special prefix so App.tsx handleDrop knows this is a character placement
+    e.dataTransfer.setData('text/plain', `__character__:${character.id}`)
+    setDraggingManifestId(`__character__:${character.id}`)
+  }, [character.id, setDraggingManifestId])
+
   return (
-    <div className="flex items-center gap-2 rounded-md border border-border bg-secondary/30 p-1.5">
+    <div
+      draggable={!isPlaced}
+      onDragStart={isPlaced ? undefined : handleDragStart}
+      onDragEnd={() => setDraggingManifestId(null)}
+      className={`flex items-center gap-2 rounded-md border border-border bg-secondary/30 p-1.5 ${
+        !isPlaced ? 'cursor-grab active:cursor-grabbing' : ''
+      }`}
+    >
       <div className="w-10 h-10 rounded bg-muted/50 flex items-center justify-center overflow-hidden shrink-0">
         {preview ? (
           <img src={preview} alt={character.name} className="w-full h-full object-contain" style={{ imageRendering: 'pixelated' }} />
@@ -151,25 +153,10 @@ function CharacterPlacementCard({ character, onPlace, onRemove }: {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-xs font-medium truncate">{character.name}</p>
-        <p className="text-[10px] text-muted-foreground">
-          {isPlaced ? `Placed (${character.gridPosition!.x}, ${character.gridPosition!.y})` : 'Not placed'}
+        <p className={`text-[10px] ${isPlaced ? 'text-green-500' : 'text-muted-foreground'}`}>
+          {isPlaced ? 'On canvas' : 'Drag to place'}
         </p>
       </div>
-      {isPlaced ? (
-        <button
-          onClick={() => onRemove(character.id)}
-          className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors shrink-0"
-        >
-          Remove
-        </button>
-      ) : (
-        <button
-          onClick={() => onPlace(character.id)}
-          className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 hover:bg-primary/20 text-primary transition-colors shrink-0"
-        >
-          Place
-        </button>
-      )}
     </div>
   )
 }
