@@ -109,7 +109,13 @@ export function registerIPCHandlers(store: AgitoStore): void {
     ptyPool.kill(characterId)
   })
 
+  ipcMain.handle(IPC_COMMANDS.PTY_IS_ALIVE, (_, characterId: string) => {
+    return ptyPool.isAlive(characterId)
+  })
+
   ipcMain.handle(IPC_COMMANDS.PTY_GET_BUFFER, (_, characterId: string) => {
+    // Flush pending 16ms batch so buffer is complete and no duplicate data is sent
+    flushPtyData(characterId, broadcastToAll)
     return ptyPool.getOutputBuffer(characterId)
   })
 
@@ -244,12 +250,22 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
   ipcMain.handle(
     IPC_COMMANDS.SESSION_RESUME,
-    async (_, args: { characterId: string; sessionId: string; workingDirectory: string }) => {
-      const { characterId, sessionId, workingDirectory } = args
+    async (_, args: { characterId: string; sessionId: string; workingDirectory?: string }) => {
+      const { characterId, sessionId } = args
 
       const characters = store.getCharacters()
       const character = characters.find((c) => c.id === characterId)
       if (!character) throw new Error(`Character not found: ${characterId}`)
+
+      // Resolve working directory: use provided, or look up from session mapping
+      let workingDirectory = args.workingDirectory
+      if (!workingDirectory) {
+        const mapping = store.getSessions().find((s) => s.sessionId === sessionId)
+        workingDirectory = mapping?.workingDirectory
+      }
+      if (!workingDirectory) {
+        throw new Error('Working directory not found for this session')
+      }
 
       const adapter = getEngineAdapter(character.engine)
 
@@ -291,10 +307,23 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
       const now = new Date().toISOString()
       const sessions = store.getSessions()
-      const updatedSessions = sessions.map((s) =>
-        s.sessionId === sessionId ? { ...s, lastActiveAt: now } : s
-      )
-      store.saveSessions(updatedSessions)
+      const existingMapping = sessions.find((s) => s.sessionId === sessionId)
+      if (existingMapping) {
+        store.saveSessions(sessions.map((s) =>
+          s.sessionId === sessionId ? { ...s, lastActiveAt: now } : s
+        ))
+      } else {
+        // Create new mapping for externally scanned sessions
+        sessions.push({
+          characterId,
+          sessionId,
+          engineType: character.engine,
+          workingDirectory,
+          createdAt: now,
+          lastActiveAt: now,
+        })
+        store.saveSessions(sessions)
+      }
 
       const updatedCharacters = characters.map((c) =>
         c.id === characterId
@@ -626,74 +655,16 @@ export function registerIPCHandlers(store: AgitoStore): void {
     }
   })
 
-  // --- Auto-resume stale sessions on startup ---
-  // Characters with currentSessionId but no running PTY need to be resumed
+  // --- Reset status on startup ---
+  // App restarted = all PTYs are dead. Reset status to idle but keep session assignments.
   const startupCharacters = store.getCharacters()
-  const sessions = store.getSessions()
-  for (const char of startupCharacters) {
-    if (char.currentSessionId && !ptyPool.isAlive(char.id)) {
-      const session = sessions.find((s) => s.sessionId === char.currentSessionId)
-      if (!session) {
-        // Session mapping not found — reset to idle
-        store.saveCharacters(
-          store.getCharacters().map((c) =>
-            c.id === char.id ? { ...c, currentSessionId: null, status: 'idle' as const } : c
-          )
-        )
-        continue
-      }
-
-      const adapter = getEngineAdapter(char.engine)
-      let soulContent: string | undefined
-      if (char.soul) {
-        try {
-          soulContent = readFileSync(join(store.getBasePath(), char.soul), 'utf-8')
-        } catch { /* ignore */ }
-      }
-
-      const spawnArgs = adapter.buildSpawnArgs({
-        sessionId: char.currentSessionId,
-        soulPath: soulContent,
-        workingDirectory: session.workingDirectory,
-      })
-
-      // Skip if working directory no longer exists
-      if (!existsSync(session.workingDirectory)) {
-        store.saveCharacters(
-          store.getCharacters().map((c) =>
-            c.id === char.id ? { ...c, currentSessionId: null, status: 'idle' as const } : c
-          )
-        )
-        continue
-      }
-
-      const pty = ptyPool.spawn(char.id, adapter.cliCommand, spawnArgs, session.workingDirectory)
-
-      pty.onData((ptyData) => {
-        batchPtyData(char.id, ptyData, broadcastToAll)
-        statusDetector.feedData(char.id, ptyData)
-      })
-
-      statusDetector.attach(char.id, (status) => {
-        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, { characterId: char.id, status })
-      })
-
-      pty.onExit(({ exitCode }) => {
-        flushPtyData(char.id, broadcastToAll)
-        statusDetector.detach(char.id)
-        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
-          characterId: char.id,
-          status: exitCode === 0 ? 'done' : 'error',
-        })
-      })
-
-      // Update status to idle initially — statusDetector will set 'working' when data flows
-      store.saveCharacters(
-        store.getCharacters().map((c) =>
-          c.id === char.id ? { ...c, status: 'idle' as const } : c
-        )
+  const needsReset = startupCharacters.some((c) => c.status !== 'idle')
+  if (needsReset) {
+    store.saveCharacters(
+      startupCharacters.map((c) =>
+        c.status !== 'idle' ? { ...c, status: 'idle' as const } : c
       )
-    }
+    )
   }
 }
 

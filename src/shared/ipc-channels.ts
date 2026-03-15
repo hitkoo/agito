@@ -14,6 +14,7 @@ export const IPC_COMMANDS = {
   PTY_RESIZE: 'pty:resize',
   PTY_KILL: 'pty:kill',
   PTY_GET_BUFFER: 'pty:get-buffer',
+  PTY_IS_ALIVE: 'pty:is-alive',
 
   // Store operations
   STORE_READ: 'store:read',

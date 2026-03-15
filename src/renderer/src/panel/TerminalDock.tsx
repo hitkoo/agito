@@ -1,90 +1,10 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import '@xterm/xterm/css/xterm.css'
 import { useCharacterStore } from '../stores/character-store'
 import { useUIStore } from '../stores/ui-store'
-import { IPC_COMMANDS, IPC_EVENTS } from '../../../shared/ipc-channels'
+import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import type { Character, ScannedSession } from '../../../shared/types'
+import { TerminalView } from './TerminalView'
 import { toast } from 'sonner'
-
-// ---------------------------------------------------------------------------
-// xterm instance manager — persists across panel open/close
-// ---------------------------------------------------------------------------
-
-interface TerminalEntry {
-  terminal: Terminal
-  fitAddon: FitAddon
-  dataDisposable: { dispose(): void }
-  ipcUnsubscribe: () => void
-}
-
-const terminalInstances = new Map<string, TerminalEntry>()
-
-function getOrCreateTerminal(characterId: string): TerminalEntry {
-  const existing = terminalInstances.get(characterId)
-  if (existing) return existing
-
-  const terminal = new Terminal({
-    theme: getXtermTheme(),
-    fontFamily: 'monospace',
-    fontSize: 13,
-    cursorBlink: true,
-    allowTransparency: false,
-  })
-
-  const fitAddon = new FitAddon()
-  terminal.loadAddon(fitAddon)
-
-  // Forward user input to PTY
-  const dataDisposable = terminal.onData((data) => {
-    window.api.invoke(IPC_COMMANDS.PTY_WRITE, { characterId, data })
-  })
-
-  // Subscribe to PTY output
-  const ipcUnsubscribe = window.api.on(IPC_EVENTS.PTY_DATA, (...args: unknown[]) => {
-    const payload = args[0] as { characterId: string; data: string }
-    if (payload.characterId === characterId) {
-      terminal.write(payload.data)
-    }
-  })
-
-  // Replay buffered output
-  window.api.invoke<string>(IPC_COMMANDS.PTY_GET_BUFFER, characterId).then((buffer) => {
-    if (buffer) terminal.write(buffer)
-  })
-
-  const entry: TerminalEntry = { terminal, fitAddon, dataDisposable, ipcUnsubscribe }
-  terminalInstances.set(characterId, entry)
-  return entry
-}
-
-function disposeTerminal(characterId: string): void {
-  const entry = terminalInstances.get(characterId)
-  if (!entry) return
-  entry.dataDisposable.dispose()
-  entry.ipcUnsubscribe()
-  entry.terminal.dispose()
-  terminalInstances.delete(characterId)
-}
-
-function getXtermTheme(): Record<string, string> {
-  try {
-    const style = getComputedStyle(document.documentElement)
-    const bg = style.getPropertyValue('--background').trim()
-    const fg = style.getPropertyValue('--foreground').trim()
-    const primary = style.getPropertyValue('--primary').trim()
-    const muted = style.getPropertyValue('--muted').trim()
-    return {
-      background: bg ? `hsl(${bg})` : '#1a1b26',
-      foreground: fg ? `hsl(${fg})` : '#c8c8c8',
-      cursor: primary ? `hsl(${primary})` : '#7c7cfa',
-      selectionBackground: muted ? `hsl(${muted})` : '#3a3a5a',
-    }
-  } catch {
-    return { background: '#1a1b26', foreground: '#c8c8c8', cursor: '#7c7cfa' }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Status helpers
@@ -119,15 +39,69 @@ export function TerminalDock(): ReactElement | null {
   const setDockPosition = useUIStore((s) => s.setDockPosition)
   const setDockSize = useUIStore((s) => s.setDockSize)
   const characters = useCharacterStore((s) => s.characters)
-  const theme = useUIStore((s) => s.theme)
 
   const containerRef = useRef<HTMLDivElement>(null)
-  const termContainerRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
   const resizeRef = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null)
 
-  // Characters with active sessions
-  const activeChars = characters.filter((c) => c.currentSessionId !== null)
+  // Characters with assigned sessions (PTY may or may not be running)
+  const assignedChars = characters.filter((c) => c.currentSessionId !== null)
+
+  // Track which PTYs are actually alive
+  const [alivePtys, setAlivePtys] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let cancelled = false
+    async function check(): Promise<void> {
+      const alive = new Set<string>()
+      for (const c of assignedChars) {
+        const isAlive = await window.api.invoke<boolean>(IPC_COMMANDS.PTY_IS_ALIVE, c.id)
+        if (isAlive) alive.add(c.id)
+      }
+      if (!cancelled) setAlivePtys(alive)
+    }
+    check()
+    // Re-check when characters change (session started/stopped)
+    return () => { cancelled = true }
+  }, [assignedChars.map((c) => `${c.id}:${c.currentSessionId}:${c.status}`).join()])
+
+  const activeCharHasSession = assignedChars.some((c) => c.id === dock.activeCharacterId)
+  const activeCharPtyAlive = alivePtys.has(dock.activeCharacterId ?? '')
+  const loadCharacters = useCharacterStore((s) => s.loadFromMain)
+
+  // Only show tabs for characters with alive PTYs + the currently active character
+  const visibleChars = assignedChars.filter((c) => alivePtys.has(c.id) || c.id === dock.activeCharacterId)
+
+  // Auto-resume: when active character has session but PTY is dead, resume automatically
+  const [resumingChars, setResumingChars] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    if (!dock.activeCharacterId || !activeCharHasSession || activeCharPtyAlive) return
+    if (resumingChars.has(dock.activeCharacterId)) return // already resuming
+
+    const char = characters.find((c) => c.id === dock.activeCharacterId)
+    if (!char?.currentSessionId) return
+
+    const charId = dock.activeCharacterId
+    setResumingChars((prev) => new Set(prev).add(charId))
+
+    ;(async () => {
+      try {
+        // SESSION_RESUME looks up workingDirectory from sessions.json if not provided
+        await window.api.invoke(IPC_COMMANDS.SESSION_RESUME, {
+          characterId: charId,
+          sessionId: char.currentSessionId,
+        })
+        await loadCharacters()
+        setAlivePtys((prev) => new Set(prev).add(charId))
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err))
+        // Clear invalid session so user gets assign view
+        await window.api.invoke(IPC_COMMANDS.SESSION_STOP, { characterId: charId })
+        await loadCharacters()
+      } finally {
+        setResumingChars((prev) => { const next = new Set(prev); next.delete(charId); return next })
+      }
+    })()
+  }, [dock.activeCharacterId, activeCharHasSession, activeCharPtyAlive])
 
   // Auto-center on first open
   const [initialized, setInitialized] = useState(false)
@@ -141,71 +115,6 @@ export function TerminalDock(): ReactElement | null {
       setInitialized(true)
     }
   }, [dock.visible, initialized, dock.position.x, dock.size.width, dock.size.height, setDockPosition])
-
-  // Whether the active character currently has a session (drives terminal vs assign view)
-  const activeCharHasSession = activeChars.some((c) => c.id === dock.activeCharacterId)
-
-  // Attach/detach xterm to DOM when active character or visibility changes
-  useEffect(() => {
-    const el = termContainerRef.current
-    if (!el || !dock.activeCharacterId || !dock.visible || dock.minimized || !activeCharHasSession) return
-
-    const entry = getOrCreateTerminal(dock.activeCharacterId)
-
-    // If already opened elsewhere, just reattach
-    if (!entry.terminal.element || entry.terminal.element.parentElement !== el) {
-      // Clear container
-      el.innerHTML = ''
-      entry.terminal.open(el)
-    }
-
-    // Fit after a frame (DOM needs to settle)
-    requestAnimationFrame(() => {
-      entry.fitAddon.fit()
-      entry.terminal.focus()
-      // Sync resize with PTY
-      const { cols, rows } = entry.terminal
-      window.api.invoke(IPC_COMMANDS.PTY_RESIZE, {
-        characterId: dock.activeCharacterId,
-        cols,
-        rows,
-      })
-    })
-
-    // Resize observer
-    const ro = new ResizeObserver(() => {
-      entry.fitAddon.fit()
-      const { cols, rows } = entry.terminal
-      window.api.invoke(IPC_COMMANDS.PTY_RESIZE, {
-        characterId: dock.activeCharacterId!,
-        cols,
-        rows,
-      })
-    })
-    ro.observe(el)
-
-    return () => {
-      ro.disconnect()
-    }
-  }, [dock.activeCharacterId, dock.visible, dock.minimized, activeCharHasSession])
-
-  // Update xterm theme when app theme changes
-  useEffect(() => {
-    const xtermTheme = getXtermTheme()
-    for (const [, entry] of terminalInstances) {
-      entry.terminal.options.theme = xtermTheme
-    }
-  }, [theme])
-
-  // Clean up terminals when session is stopped
-  useEffect(() => {
-    const knownIds = new Set(activeChars.map((c) => c.id))
-    for (const id of terminalInstances.keys()) {
-      if (!knownIds.has(id)) {
-        disposeTerminal(id)
-      }
-    }
-  }, [activeChars])
 
   // ESC to close
   useEffect(() => {
@@ -279,17 +188,16 @@ export function TerminalDock(): ReactElement | null {
     [dock.size, setDockSize]
   )
 
-  if (!dock.visible) return null
-
-  // Minimized: show small tab bar at bottom
-  if (dock.minimized) {
-    return (
+  return (
+    <>
+    {/* Minimized bar */}
+    {dock.visible && dock.minimized && (
       <div
         className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-1 px-2 py-1.5 rounded-lg border border-border bg-background shadow-lg"
         onClick={restoreTerminalDock}
         style={{ cursor: 'pointer' }}
       >
-        {activeChars.map((c) => (
+        {visibleChars.map((c) => (
           <div key={c.id} className="flex items-center gap-1.5 px-2 py-0.5 text-xs text-muted-foreground">
             <span
               className="w-2 h-2 rounded-full inline-block"
@@ -300,10 +208,9 @@ export function TerminalDock(): ReactElement | null {
         ))}
         <span className="text-xs text-muted-foreground ml-2">Terminal</span>
       </div>
-    )
-  }
+    )}
 
-  return (
+    {/* Main dock */}
     <div
       ref={containerRef}
       className="absolute z-[200] flex flex-col rounded-lg border border-border bg-background shadow-lg overflow-hidden"
@@ -312,6 +219,7 @@ export function TerminalDock(): ReactElement | null {
         top: dock.position.y,
         width: dock.size.width,
         height: dock.size.height,
+        display: (!dock.visible || dock.minimized) ? 'none' : 'flex',
       }}
     >
       {/* Tab bar — draggable */}
@@ -321,7 +229,7 @@ export function TerminalDock(): ReactElement | null {
         style={{ cursor: 'grab' }}
       >
         <div className="flex-1 flex items-center gap-0.5 px-1 overflow-x-auto styled-scroll">
-          {activeChars.map((c) => (
+          {visibleChars.map((c) => (
             <TabButton
               key={c.id}
               character={c}
@@ -330,7 +238,7 @@ export function TerminalDock(): ReactElement | null {
             />
           ))}
           {/* Show current character tab even if no active session */}
-          {dock.activeCharacterId && !activeChars.some((c) => c.id === dock.activeCharacterId) && (() => {
+          {dock.activeCharacterId && !visibleChars.some((c) => c.id === dock.activeCharacterId) && (() => {
             const char = characters.find((c) => c.id === dock.activeCharacterId)
             return char ? (
               <TabButton
@@ -362,22 +270,39 @@ export function TerminalDock(): ReactElement | null {
         </div>
       </div>
 
-      {/* Terminal container or session assignment */}
-      {dock.activeCharacterId && activeCharHasSession ? (
-        <div className="flex-1 flex flex-col overflow-hidden relative" style={{ minHeight: 0 }}>
-          {/* no overlay needed — errors are shown in terminal */}
-          <div
-            ref={termContainerRef}
-            className="flex-1 overflow-hidden px-2 pb-1"
-            style={{ minHeight: 0 }}
-          />
+      {/* Terminal or session assignment */}
+      {/* Terminal wrappers — one per character with alive PTY, toggle with display */}
+      {visibleChars.filter((c) => alivePtys.has(c.id)).map((c) => (
+        <div
+          key={c.id}
+          style={{
+            display: c.id === dock.activeCharacterId ? 'flex' : 'none',
+            flex: 1,
+            overflow: 'hidden',
+            minHeight: 0,
+          }}
+        >
+          <TerminalView characterId={c.id} isActive={c.id === dock.activeCharacterId} />
         </div>
-      ) : dock.activeCharacterId ? (
+      ))}
+
+      {/* Resuming indicator when session assigned but PTY not yet alive */}
+      {dock.activeCharacterId && activeCharHasSession && !activeCharPtyAlive && (
+        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+          Resuming session...
+        </div>
+      )}
+
+      {/* Session assign view when no session assigned */}
+      {dock.activeCharacterId && !activeCharHasSession && (
         <SessionAssignView
           character={characters.find((c) => c.id === dock.activeCharacterId)!}
           onSessionStarted={() => {}}
         />
-      ) : (
+      )}
+
+      {/* No character selected */}
+      {!dock.activeCharacterId && (
         <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
           Select a character to start
         </div>
@@ -394,6 +319,7 @@ export function TerminalDock(): ReactElement | null {
         </svg>
       </div>
     </div>
+    </>
   )
 }
 
@@ -467,9 +393,8 @@ function SessionAssignView({
   const [scannedSessions, setScannedSessions] = useState<ScannedSession[]>([])
   const [scanning, setScanning] = useState(false)
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set())
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set()) // dirs showing more than 5
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set())
 
-  // Scan sessions filtered by engine on mount
   useEffect(() => {
     setScanning(true)
     window.api.invoke<ScannedSession[]>(IPC_COMMANDS.SESSION_SCAN).then((sessions) => {
@@ -494,9 +419,13 @@ function SessionAssignView({
   const handleNewWorkDir = useCallback(async () => {
     const dir = await window.api.invoke<string | null>(IPC_COMMANDS.DIALOG_OPEN_FOLDER)
     if (!dir) return
-    await window.api.invoke(IPC_COMMANDS.SESSION_START, { characterId: character.id, workingDirectory: dir })
-    await loadCharacters()
-    onSessionStarted()
+    try {
+      await window.api.invoke(IPC_COMMANDS.SESSION_START, { characterId: character.id, workingDirectory: dir })
+      await loadCharacters()
+      onSessionStarted()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
   }, [character.id, loadCharacters, onSessionStarted])
 
   const handleAssignSession = useCallback(
@@ -525,7 +454,6 @@ function SessionAssignView({
     })
   }, [])
 
-  // Group by workingDirectory
   const sessionsByDir = scannedSessions.reduce<Map<string, ScannedSession[]>>((map, s) => {
     const key = s.workingDirectory || 'Unknown'
     if (!map.has(key)) map.set(key, [])
@@ -537,7 +465,6 @@ function SessionAssignView({
 
   return (
     <div className="flex-1 overflow-y-auto styled-scroll p-4 space-y-3" style={{ minHeight: 0 }}>
-      {/* Header with new working dir button */}
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
           {scanning ? 'Scanning sessions...' : `${scannedSessions.length} sessions found`}
@@ -550,9 +477,6 @@ function SessionAssignView({
         </button>
       </div>
 
-      {/* Errors shown via toast */}
-
-      {/* Session history */}
       {!scanning && scannedSessions.length === 0 && (
         <div className="text-center py-8">
           <p className="text-sm text-muted-foreground mb-2">No {character.engine} sessions found</p>
@@ -565,7 +489,6 @@ function SessionAssignView({
         </div>
       )}
 
-      {/* Working directory groups */}
       {[...sessionsByDir.entries()].map(([dir, sessions]) => {
         const isCollapsed = collapsedDirs.has(dir)
         const isShowingMore = expandedDirs.has(dir)
@@ -574,7 +497,6 @@ function SessionAssignView({
 
         return (
           <div key={dir} className="rounded-md border border-border bg-muted/10">
-            {/* Directory header */}
             <div className="flex items-center gap-1.5 px-2 py-1.5">
               <button
                 className="text-muted-foreground hover:text-foreground transition-colors w-4 h-4 flex items-center justify-center shrink-0"
@@ -593,13 +515,12 @@ function SessionAssignView({
               </button>
             </div>
 
-            {/* Sessions */}
             {!isCollapsed && (
               <div className="border-t border-border">
                 {visibleSessions.map((s) => (
                   <div
                     key={s.sessionId}
-                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted/30 transition-colors group"
+                    className="flex items-center gap-2 pl-7 pr-3 py-1.5 hover:bg-muted/30 transition-colors group"
                   >
                     <span className="text-[11px] font-mono text-foreground truncate flex-1">
                       {s.label || s.sessionId.slice(0, 12)}

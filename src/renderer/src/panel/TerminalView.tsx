@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -14,16 +14,24 @@ export function TerminalView({ characterId, isActive }: TerminalViewProps): Reac
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!containerRef.current) return
 
+    // Read theme from CSS variables for dark/light consistency
+    const style = getComputedStyle(document.documentElement)
+    const hsl = (v: string, fallback: string): string => {
+      const val = style.getPropertyValue(v).trim()
+      return val ? `hsl(${val})` : fallback
+    }
+
     const terminal = new Terminal({
       theme: {
-        background: '#16213e',
-        foreground: '#c8c8c8',
-        cursor: '#c8c8c8',
-        selectionBackground: '#0f3460',
+        background: hsl('--background', '#1a1b26'),
+        foreground: hsl('--foreground', '#c8c8c8'),
+        cursor: hsl('--primary', '#7c7cfa'),
+        selectionBackground: hsl('--muted', '#3a3a5a'),
       },
       fontFamily: 'monospace',
       fontSize: 13,
@@ -33,17 +41,36 @@ export function TerminalView({ characterId, isActive }: TerminalViewProps): Reac
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
     terminal.open(containerRef.current)
-    fitAddon.fit()
 
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
-    // Replay buffered output from PTY (for panel reopen)
-    window.api.invoke<string>(IPC_COMMANDS.PTY_GET_BUFFER, characterId).then((buffer) => {
-      if (buffer && terminalRef.current) {
-        terminalRef.current.write(buffer)
+    let gotData = false
+    const markLoaded = (): void => {
+      if (!gotData) {
+        gotData = true
+        setLoading(false)
       }
+    }
+
+    // Fit first, then replay buffer
+    requestAnimationFrame(() => {
+      fitAddon.fit()
+      const { cols, rows } = terminal
+      window.api.invoke(IPC_COMMANDS.PTY_RESIZE, { characterId, cols, rows })
+
+      // Replay buffered output from PTY
+      window.api.invoke<string>(IPC_COMMANDS.PTY_GET_BUFFER, characterId).then((buffer) => {
+        if (buffer && terminalRef.current) {
+          terminalRef.current.write(buffer)
+          terminalRef.current.scrollToBottom()
+          markLoaded()
+        }
+      })
     })
+
+    // Focus terminal
+    terminal.focus()
 
     // Forward user input to PTY
     const dataDisposable = terminal.onData((data) => {
@@ -55,6 +82,7 @@ export function TerminalView({ characterId, isActive }: TerminalViewProps): Reac
       const payload = args[0] as { characterId: string; data: string }
       if (payload.characterId === characterId) {
         terminal.write(payload.data)
+        markLoaded()
       }
     })
 
@@ -79,22 +107,35 @@ export function TerminalView({ characterId, isActive }: TerminalViewProps): Reac
     }
   }, [characterId])
 
-  // Fit terminal when isActive changes (panel becomes visible)
+  // Fit + focus when becoming the active tab
   useEffect(() => {
-    if (isActive && fitAddonRef.current) {
-      fitAddonRef.current.fit()
+    if (isActive && fitAddonRef.current && terminalRef.current) {
+      requestAnimationFrame(() => {
+        fitAddonRef.current?.fit()
+        terminalRef.current?.focus()
+        const t = terminalRef.current
+        if (t) {
+          window.api.invoke(IPC_COMMANDS.PTY_RESIZE, { characterId, cols: t.cols, rows: t.rows })
+        }
+      })
     }
-  }, [isActive])
+  }, [isActive, characterId])
 
   return (
-    <div
-      ref={containerRef}
-      style={{
-        flex: 1,
-        overflow: 'hidden',
-        padding: '4px',
-        backgroundColor: '#16213e',
-      }}
-    />
+    <div className="flex-1 overflow-hidden relative bg-background">
+      <div
+        ref={containerRef}
+        className="absolute inset-0"
+        style={{ paddingLeft: 8, paddingRight: 2, paddingTop: 4, paddingBottom: 4 }}
+      />
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span className="w-4 h-4 border-2 border-muted-foreground/30 border-t-muted-foreground rounded-full animate-spin" />
+            Loading session...
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
