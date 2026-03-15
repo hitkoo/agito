@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { join } from 'path'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, renameSync } from 'fs'
 import {
   AGITO_DIR_NAME,
   CHARACTERS_FILE,
@@ -8,6 +8,7 @@ import {
   SESSIONS_FILE,
   SOULS_DIR,
   ASSETS_DIR,
+  BUILTIN_ASSETS_DIR,
   SETTINGS_FILE,
   DEFAULT_SETTINGS,
 } from '../shared/constants'
@@ -19,6 +20,8 @@ import type {
   AgitoSettings,
 } from '../shared/types'
 
+const MIGRATION_VERSION = 1
+
 export class AgitoStore {
   private basePath: string
 
@@ -27,6 +30,7 @@ export class AgitoStore {
   }
 
   initialize(): void {
+    // Create base directories
     const dirs = [
       this.basePath,
       join(this.basePath, SOULS_DIR),
@@ -40,6 +44,7 @@ export class AgitoStore {
       }
     }
 
+    // Create default files
     if (!existsSync(this.filePath(CHARACTERS_FILE))) {
       this.writeJSON(CHARACTERS_FILE, [])
     }
@@ -51,6 +56,105 @@ export class AgitoStore {
     }
     if (!existsSync(this.filePath(SETTINGS_FILE))) {
       this.writeJSON(SETTINGS_FILE, { ...DEFAULT_SETTINGS })
+    }
+
+    // Run migration if needed
+    this.runMigration()
+  }
+
+  private runMigration(): void {
+    const settings = this.getSettings()
+    const currentVersion = (settings as unknown as Record<string, unknown>)._migrationVersion as number ?? 0
+    if (currentVersion >= MIGRATION_VERSION) return
+
+    console.log(`[AgitoStore] Running migration v${currentVersion} → v${MIGRATION_VERSION}`)
+
+    // Migration 0 → 1: sprite→skin, character→skin folders, tile→background
+    this.migrateCharactersJson()
+    this.migrateAssetFolders()
+    this.migrateRoomLayout()
+
+    // Update migration version
+    this.saveSettings({ ...settings, _migrationVersion: MIGRATION_VERSION } as AgitoSettings)
+    console.log('[AgitoStore] Migration complete')
+  }
+
+  private migrateCharactersJson(): void {
+    try {
+      const raw = readFileSync(this.filePath(CHARACTERS_FILE), 'utf-8')
+      const characters = JSON.parse(raw) as Record<string, unknown>[]
+      let changed = false
+
+      for (const char of characters) {
+        // sprite → skin
+        if ('sprite' in char && !('skin' in char)) {
+          const spritePath = (char.sprite as string) || ''
+          char.skin = spritePath.replace(/\/character\//g, '/skin/')
+          delete char.sprite
+          changed = true
+        }
+      }
+
+      if (changed) {
+        this.writeJSON(CHARACTERS_FILE, characters)
+        console.log('[Migration] characters.json: sprite → skin')
+      }
+    } catch {
+      // File doesn't exist or is invalid, skip
+    }
+  }
+
+  private migrateAssetFolders(): void {
+    const assetsDir = join(this.basePath, ASSETS_DIR)
+    if (!existsSync(assetsDir)) return
+
+    for (const themeEntry of readdirSync(assetsDir, { withFileTypes: true })) {
+      if (!themeEntry.isDirectory()) continue
+      const themeDir = join(assetsDir, themeEntry.name)
+
+      // character/ → skin/
+      const charDir = join(themeDir, 'character')
+      const skinDir = join(themeDir, 'skin')
+      if (existsSync(charDir) && !existsSync(skinDir)) {
+        renameSync(charDir, skinDir)
+        console.log(`[Migration] ${themeEntry.name}/character → skin`)
+      }
+
+      // tile/ → background/
+      const tileDir = join(themeDir, 'tile')
+      const bgDir = join(themeDir, 'background')
+      if (existsSync(tileDir) && !existsSync(bgDir)) {
+        renameSync(tileDir, bgDir)
+        console.log(`[Migration] ${themeEntry.name}/tile → background`)
+      }
+    }
+  }
+
+  private migrateRoomLayout(): void {
+    try {
+      const raw = readFileSync(this.filePath(ROOM_LAYOUT_FILE), 'utf-8')
+      const layout = JSON.parse(raw) as { items?: { manifestId: string }[] }
+      let changed = false
+
+      if (layout.items) {
+        for (const item of layout.items) {
+          if (item.manifestId && item.manifestId.includes('/tile/')) {
+            item.manifestId = item.manifestId.replace(/\/tile\//g, '/background/')
+            changed = true
+          }
+          if (item.manifestId && item.manifestId.includes('/character/')) {
+            item.manifestId = item.manifestId.replace(/\/character\//g, '/skin/')
+            changed = true
+          }
+        }
+      }
+
+      if (changed) {
+        this.writeJSON(ROOM_LAYOUT_FILE, layout)
+        console.log('[Migration] room-layout.json: paths updated')
+      }
+    } catch {
+      // File doesn't exist or is invalid, skip
     }
   }
 
@@ -118,5 +222,13 @@ export class AgitoStore {
 
   getBasePath(): string {
     return this.basePath
+  }
+
+  getBuiltinAssetsPath(): string {
+    if (app.isPackaged) {
+      return join(process.resourcesPath, BUILTIN_ASSETS_DIR)
+    }
+    // Dev mode: relative to project root
+    return join(app.getAppPath(), BUILTIN_ASSETS_DIR)
   }
 }

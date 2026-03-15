@@ -334,41 +334,46 @@ export function registerIPCHandlers(store: AgitoStore): void {
   })
 
   ipcMain.handle(IPC_COMMANDS.ASSET_LIST, () => {
-    const assetsDir = join(store.getBasePath(), ASSETS_DIR)
-    if (!existsSync(assetsDir)) {
-      mkdirSync(assetsDir, { recursive: true })
-      return []
-    }
     const imageExts = ['.png', '.webp', '.jpg', '.jpeg']
     const categories = ['skin', 'furniture', 'background']
-    const results: { theme: string; category: string; filename: string; relativePath: string }[] = []
+    const results: { theme: string; category: string; filename: string; relativePath: string; source: 'builtin' | 'custom' }[] = []
 
-    // Scan assets/{theme}/{category}/ structure
-    for (const themeEntry of readdirSync(assetsDir, { withFileTypes: true })) {
-      if (!themeEntry.isDirectory()) continue
-      const theme = themeEntry.name
-      const themeDir = join(assetsDir, theme)
-      for (const catEntry of readdirSync(themeDir, { withFileTypes: true })) {
-        if (!catEntry.isDirectory()) continue
-        const category = catEntry.name
-        if (!categories.includes(category)) continue
-        const catDir = join(themeDir, category)
-        for (const fileEntry of readdirSync(catDir, { withFileTypes: true })) {
-          if (fileEntry.isDirectory()) continue
-          if (!imageExts.includes(extname(fileEntry.name).toLowerCase())) continue
-          results.push({
-            theme,
-            category,
-            filename: fileEntry.name,
-            relativePath: `${theme}/${category}/${fileEntry.name}`,
-          })
+    const scanDir = (baseDir: string, source: 'builtin' | 'custom'): void => {
+      if (!existsSync(baseDir)) return
+      for (const themeEntry of readdirSync(baseDir, { withFileTypes: true })) {
+        if (!themeEntry.isDirectory()) continue
+        const theme = themeEntry.name
+        const themeDir = join(baseDir, theme)
+        for (const catEntry of readdirSync(themeDir, { withFileTypes: true })) {
+          if (!catEntry.isDirectory()) continue
+          const category = catEntry.name
+          if (!categories.includes(category)) continue
+          const catDir = join(themeDir, category)
+          for (const fileEntry of readdirSync(catDir, { withFileTypes: true })) {
+            if (fileEntry.isDirectory()) continue
+            if (!imageExts.includes(extname(fileEntry.name).toLowerCase())) continue
+            results.push({
+              theme,
+              category,
+              filename: fileEntry.name,
+              relativePath: `${theme}/${category}/${fileEntry.name}`,
+              source,
+            })
+          }
         }
       }
     }
+
+    // Scan built-in assets first, then custom (custom can override)
+    scanDir(store.getBuiltinAssetsPath(), 'builtin')
+    const customDir = join(store.getBasePath(), ASSETS_DIR)
+    if (!existsSync(customDir)) mkdirSync(customDir, { recursive: true })
+    scanDir(customDir, 'custom')
+
     return results
   })
 
-  ipcMain.handle(IPC_COMMANDS.ASSET_UPLOAD, async (_, category: string) => {
+  ipcMain.handle(IPC_COMMANDS.ASSET_UPLOAD, async (_, category: string, theme?: string) => {
     const result = await dialog.showOpenDialog({
       filters: [{ name: 'Images', extensions: ['png', 'webp', 'jpg', 'jpeg'] }],
       properties: ['openFile'],
@@ -376,8 +381,9 @@ export function registerIPCHandlers(store: AgitoStore): void {
     if (result.canceled || result.filePaths.length === 0) return null
 
     const validCategory = ['skin', 'furniture', 'background'].includes(category) ? category : 'furniture'
+    const themeName = theme || 'custom'
     const sourcePath = result.filePaths[0]
-    const destDir = join(store.getBasePath(), ASSETS_DIR, 'custom', validCategory)
+    const destDir = join(store.getBasePath(), ASSETS_DIR, themeName, validCategory)
     if (!existsSync(destDir)) {
       mkdirSync(destDir, { recursive: true })
     }
@@ -398,13 +404,15 @@ export function registerIPCHandlers(store: AgitoStore): void {
     }
 
     copyFileSync(sourcePath, destPath)
-    return `custom/${validCategory}/${filename}`
+    return `${themeName}/${validCategory}/${filename}`
   })
 
   ipcMain.handle(IPC_COMMANDS.ASSET_READ_BASE64, (_, relativePath: string) => {
-    // relativePath is relative to ~/.agito/assets/ e.g. "office/furniture/desk.png"
-    const filePath = join(store.getBasePath(), ASSETS_DIR, relativePath)
-    if (!existsSync(filePath)) return null
+    // Check custom assets first, then builtin
+    const customPath = join(store.getBasePath(), ASSETS_DIR, relativePath)
+    const builtinPath = join(store.getBuiltinAssetsPath(), relativePath)
+    const filePath = existsSync(customPath) ? customPath : existsSync(builtinPath) ? builtinPath : null
+    if (!filePath) return null
     const ext = extname(relativePath).toLowerCase().replace('.', '')
     const mime = ext === 'jpg' ? 'jpeg' : ext
     const data = readFileSync(filePath)
