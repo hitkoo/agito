@@ -122,11 +122,10 @@ export function TerminalView({ characterId, isActive }: TerminalViewProps): Reac
   }, [isActive, characterId])
 
   return (
-    <div className="flex-1 overflow-hidden relative bg-background">
+    <div className="flex-1 overflow-hidden relative bg-background" style={{ padding: '4px 10px 4px 16px' }}>
       <div
         ref={containerRef}
-        className="absolute inset-0"
-        style={{ paddingLeft: 8, paddingRight: 2, paddingTop: 4, paddingBottom: 4 }}
+        className="w-full h-full"
       />
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
