@@ -8,6 +8,9 @@ files:
   - '!src/*'
   - '!electron.vite.config.*'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+extraResources:
+  - from: builtin-assets
+    to: builtin-assets
 mac:
   target:
     - dmg
