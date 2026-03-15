@@ -15,11 +15,89 @@ import {
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
-import { SpriteLibrary } from './SpriteLibrary'
 import { CreateCharacterDialog } from './CreateCharacterDialog'
 
 // ---------------------------------------------------------------------------
-// Sprite preview hook
+// SkinGrid — inline skin asset picker
+// ---------------------------------------------------------------------------
+
+interface SkinGridProps {
+  currentSkin: string
+  onSelect: (path: string) => void
+}
+
+function SkinGrid({ currentSkin, onSelect }: SkinGridProps): ReactElement {
+  const [skins, setSkins] = useState<{ relativePath: string; theme: string; filename: string }[]>([])
+  const [previews, setPreviews] = useState<Map<string, string>>(new Map())
+
+  useEffect(() => {
+    window.api
+      .invoke<{ theme: string; category: string; filename: string; relativePath: string }[]>(IPC_COMMANDS.ASSET_LIST)
+      .then((entries) => {
+        const skinEntries = (entries ?? []).filter((e) => e.category === 'skin')
+        setSkins(skinEntries)
+        // Load previews in background
+        const urlMap = new Map<string, string>()
+        const loadBatch = async (): Promise<void> => {
+          for (let i = 0; i < skinEntries.length; i += 10) {
+            const batch = skinEntries.slice(i, i + 10)
+            const results = await Promise.all(
+              batch.map(async (entry) => {
+                const data = await window.api.invoke<string | null>(IPC_COMMANDS.ASSET_READ_BASE64, entry.relativePath)
+                return { key: entry.relativePath, data }
+              })
+            )
+            for (const r of results) {
+              if (r.data) urlMap.set(r.key, r.data)
+            }
+            setPreviews(new Map(urlMap))
+          }
+        }
+        loadBatch()
+      })
+  }, [])
+
+  if (skins.length === 0) {
+    return <p className="text-xs text-muted-foreground py-2">No skins available. Upload one above.</p>
+  }
+
+  return (
+    <div className="grid grid-cols-5 gap-1.5 max-h-[200px] overflow-y-auto">
+      {skins.map((skin) => {
+        const preview = previews.get(skin.relativePath)
+        const isSelected = currentSkin === `assets/${skin.relativePath}`
+        return (
+          <button
+            key={skin.relativePath}
+            onClick={() => onSelect(`assets/${skin.relativePath}`)}
+            className={`aspect-square rounded border p-0.5 transition-colors ${
+              isSelected
+                ? 'border-primary bg-primary/10'
+                : 'border-transparent hover:border-muted-foreground/30'
+            }`}
+            title={skin.filename}
+          >
+            {preview ? (
+              <img
+                src={preview}
+                alt={skin.filename}
+                className="w-full h-full object-contain"
+                style={{ imageRendering: 'pixelated' }}
+              />
+            ) : (
+              <div className="w-full h-full bg-muted/50 flex items-center justify-center">
+                <span className="text-[8px] text-muted-foreground">?</span>
+              </div>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Skin preview hook
 // ---------------------------------------------------------------------------
 
 function useSpritePreview(spritePath: string): string | null {
@@ -184,8 +262,6 @@ function EditDetailPanel({
   const [soulFiles, setSoulFiles] = useState<string[]>([])
   const [selectedSoulFile, setSelectedSoulFile] = useState('')
   const [spritePath, setSpritePath] = useState('')
-  const [spritePreview, setSpritePreview] = useState<string | null>(null)
-  const [showSpriteLibrary, setShowSpriteLibrary] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deleteCharacterId, setDeleteCharacterId] = useState<string | null>(null)
@@ -196,7 +272,7 @@ function EditDetailPanel({
     setName(character.name)
     setEngine(character.engine)
     setSpritePath(character.skin)
-    setShowSpriteLibrary(false)
+
     setError(null)
     setIsSubmitting(false)
 
@@ -214,30 +290,11 @@ function EditDetailPanel({
     window.api.invoke<string[]>(IPC_COMMANDS.SOUL_LIST).then(setSoulFiles)
   }, [])
 
-  // Load sprite preview
-  useEffect(() => {
-    if (spritePath) {
-      const relPath = spritePath.startsWith('assets/')
-        ? spritePath.slice(7)
-        : spritePath
-      if (relPath) {
-        window.api
-          .invoke<string | null>(IPC_COMMANDS.ASSET_READ_BASE64, relPath)
-          .then(setSpritePreview)
-      } else {
-        setSpritePreview(null)
-      }
-    } else {
-      setSpritePreview(null)
-    }
-  }, [spritePath])
-
   const handleCancel = useCallback(() => {
     if (!character) return
     setName(character.name)
     setEngine(character.engine)
     setSpritePath(character.skin)
-    setShowSpriteLibrary(false)
     setError(null)
 
     if (character.soul) {
@@ -338,34 +395,11 @@ function EditDetailPanel({
           </select>
         </div>
 
-        {/* Sprite */}
+        {/* Skin */}
         <div className="flex flex-col gap-1.5">
-          <Label>Sprite</Label>
-          <div className="flex items-center gap-3">
-            {spritePreview ? (
-              <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-md border bg-muted">
-                <img
-                  src={spritePreview}
-                  alt="Current sprite"
-                  className="h-full w-full object-contain"
-                  style={{ imageRendering: 'pixelated' }}
-                />
-              </div>
-            ) : (
-              <div className="flex h-16 w-16 items-center justify-center rounded-md border bg-muted">
-                <span className="text-xs text-muted-foreground">No sprite</span>
-              </div>
-            )}
-            <div className="flex flex-col gap-1">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setShowSpriteLibrary((v) => !v)}
-                disabled={isSubmitting}
-              >
-                {showSpriteLibrary ? 'Hide Library' : 'Change'}
-              </Button>
+          <div className="flex items-center justify-between">
+            <Label>Skin</Label>
+            <div className="flex gap-1">
               <Button
                 type="button"
                 variant="outline"
@@ -391,17 +425,10 @@ function EditDetailPanel({
               )}
             </div>
           </div>
-          {showSpriteLibrary && (
-            <div className="mt-2">
-              <SpriteLibrary
-                onSelect={(path) => {
-                  setSpritePath(path)
-                  setShowSpriteLibrary(false)
-                }}
-                currentSprite={spritePath}
-              />
-            </div>
-          )}
+          <SkinGrid
+            currentSkin={spritePath}
+            onSelect={(path) => setSpritePath(path)}
+          />
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
