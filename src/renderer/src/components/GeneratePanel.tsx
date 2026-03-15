@@ -75,7 +75,7 @@ export function GeneratePanel(): JSX.Element {
         prompt: prompt.trim(),
         width: 512,
         height: 512,
-        view: category === 'skin' ? view : undefined,
+        view: (category === 'skin' || category === 'furniture') ? view : undefined,
         source_image: category === 'skin' ? sourceImage : undefined,
         template_id: templateId,
         batch_count: batchCount,
@@ -139,8 +139,8 @@ export function GeneratePanel(): JSX.Element {
             </div>
           </div>
 
-          {/* View (skin only) */}
-          {category === 'skin' && (
+          {/* View (skin and furniture) */}
+          {(category === 'skin' || category === 'furniture') && (
             <div className="space-y-1.5">
               <Label className="text-sm">View</Label>
               <div className="flex gap-1.5">
