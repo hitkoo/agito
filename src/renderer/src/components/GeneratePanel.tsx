@@ -24,6 +24,8 @@ export function GeneratePanel(): JSX.Element {
   const [batchCount, setBatchCount] = useState(2)
   const [templateId, setTemplateId] = useState<string | null>(null)
   const [templates, setTemplates] = useState<TemplateInfo[]>([])
+  const [sourceImage, setSourceImage] = useState<string | null>(null)
+  const [sourcePreview, setSourcePreview] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [statusText, setStatusText] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -73,6 +75,7 @@ export function GeneratePanel(): JSX.Element {
         width: 512,
         height: 512,
         view: category === 'skin' ? view : undefined,
+        source_image: category === 'skin' ? sourceImage : undefined,
         template_id: templateId,
         batch_count: batchCount,
       })
@@ -199,11 +202,47 @@ export function GeneratePanel(): JSX.Element {
             />
           </div>
 
+          {/* Source Image (skin only) */}
+          {category === 'skin' && (
+            <div className="space-y-1.5">
+              <Label className="text-sm">Source Image (optional)</Label>
+              {sourcePreview ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-16 h-16 rounded border bg-muted/50 flex items-center justify-center overflow-hidden">
+                    <img src={sourcePreview} alt="Source" className="w-full h-full object-contain" style={{ imageRendering: 'pixelated' }} />
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => { setSourceImage(null); setSourcePreview(null) }}>
+                    Remove
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={async () => {
+                    const relPath = await window.api.invoke<string | null>(IPC_COMMANDS.ASSET_UPLOAD, 'skin')
+                    if (relPath) {
+                      const dataUrl = await window.api.invoke<string | null>(IPC_COMMANDS.ASSET_READ_BASE64, relPath)
+                      if (dataUrl) {
+                        setSourceImage(dataUrl.split(',')[1] || '')
+                        setSourcePreview(dataUrl)
+                      }
+                    }
+                  }}
+                >
+                  Upload source image
+                </Button>
+              )}
+              <p className="text-[10px] text-muted-foreground">Converts source character to chibi pixel art, keeping identity.</p>
+            </div>
+          )}
+
           {/* Batch Count */}
           <div className="space-y-1.5">
             <Label className="text-sm">Batch Count</Label>
             <div className="flex gap-1.5">
-              {[1, 2, 3, 4].map((n) => (
+              {[1, 2, 3, 4, 5].map((n) => (
                 <button
                   key={n}
                   className={`flex-1 rounded-md py-2 text-xs font-medium transition-colors ${
