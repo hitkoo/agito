@@ -5,6 +5,7 @@ import { useCharacterStore } from '../stores/character-store'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import { Button } from './ui/button'
 import { GenerateDialog } from './GenerateDialog'
+import { SkinPickerModal } from './SkinPickerModal'
 import type { ItemCategory, AssetCategory, Character } from '../../../shared/types'
 
 // --- Types ---
@@ -14,6 +15,7 @@ interface SpriteEntry {
   category: string
   filename: string
   relativePath: string
+  source?: 'builtin' | 'custom'
 }
 
 // --- Thumbnail loader ---
@@ -61,9 +63,10 @@ function SpriteCard({ entry, dataUrl: preloadedDataUrl }: { entry: SpriteEntry; 
 
 // --- Collapsible section ---
 
-function CollapsibleSection({ title, count, defaultOpen = true, children }: {
+function CollapsibleSection({ title, count, isBuiltin, defaultOpen = true, children }: {
   title: string
   count?: number
+  isBuiltin?: boolean
   defaultOpen?: boolean
   children: React.ReactNode
 }): JSX.Element {
@@ -81,6 +84,11 @@ function CollapsibleSection({ title, count, defaultOpen = true, children }: {
         <span className="text-xs font-semibold uppercase text-muted-foreground tracking-wider group-hover:text-foreground transition-colors">
           {title}{count !== undefined ? ` (${count})` : ''}
         </span>
+        {isBuiltin && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+            built-in
+          </span>
+        )}
       </button>
       {open && children}
     </section>
@@ -112,16 +120,19 @@ function CharacterPlacementList(): JSX.Element {
           key={char.id}
           character={char}
           setDraggingManifestId={setDraggingManifestId}
+          onSkinChanged={loadCharacters}
         />
       ))}
     </div>
   )
 }
 
-function CharacterPlacementCard({ character, setDraggingManifestId }: {
+function CharacterPlacementCard({ character, setDraggingManifestId, onSkinChanged }: {
   character: Character
   setDraggingManifestId: (id: string | null) => void
+  onSkinChanged: () => void
 }): JSX.Element {
+  const [showSkinPicker, setShowSkinPicker] = useState(false)
   const preview = useSpritePreview(
     character.skin
       ? (character.skin.startsWith('assets/') ? character.skin.slice(7) : character.skin)
@@ -130,10 +141,14 @@ function CharacterPlacementCard({ character, setDraggingManifestId }: {
   const isPlaced = character.gridPosition !== null
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
-    // Use a special prefix so App.tsx handleDrop knows this is a character placement
     e.dataTransfer.setData('text/plain', `__character__:${character.id}`)
     setDraggingManifestId(`__character__:${character.id}`)
   }, [character.id, setDraggingManifestId])
+
+  const handleSkinSelect = useCallback(async (path: string) => {
+    await window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, character.id, { skin: path })
+    onSkinChanged()
+  }, [character.id, onSkinChanged])
 
   return (
     <div
@@ -157,6 +172,19 @@ function CharacterPlacementCard({ character, setDraggingManifestId }: {
           {isPlaced ? 'On canvas' : 'Drag to place'}
         </p>
       </div>
+      <button
+        onClick={() => setShowSkinPicker(true)}
+        className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground transition-colors shrink-0"
+      >
+        Skin
+      </button>
+      {showSkinPicker && (
+        <SkinPickerModal
+          currentSkin={character.skin}
+          onSelect={handleSkinSelect}
+          onClose={() => setShowSkinPicker(false)}
+        />
+      )}
     </div>
   )
 }
@@ -257,7 +285,7 @@ export function ItemPalette(): JSX.Element {
           const entries = groups.get(theme) ?? []
           const themeLabel = theme.charAt(0).toUpperCase() + theme.slice(1)
           return (
-            <CollapsibleSection key={theme} title={themeLabel} count={entries.length} defaultOpen={theme !== 'custom' || entries.length > 0}>
+            <CollapsibleSection key={theme} title={themeLabel} count={entries.length} isBuiltin={entries[0]?.source === 'builtin'} defaultOpen={theme !== 'custom' || entries.length > 0}>
               {entries.length > 0 ? (
                 <div className="grid grid-cols-3 gap-1.5">
                   {entries.map((entry) => (

@@ -16,6 +16,7 @@ import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { CreateCharacterDialog } from './CreateCharacterDialog'
+import { SkinPickerModal } from './SkinPickerModal'
 
 // ---------------------------------------------------------------------------
 // SkinGrid — inline skin asset picker
@@ -262,6 +263,10 @@ function EditDetailPanel({
   const [soulFiles, setSoulFiles] = useState<string[]>([])
   const [selectedSoulFile, setSelectedSoulFile] = useState('')
   const [spritePath, setSpritePath] = useState('')
+  const [showSkinPicker, setShowSkinPicker] = useState(false)
+  const skinPreviewUrl = useSpritePreview(
+    spritePath ? (spritePath.startsWith('assets/') ? spritePath.slice(7) : spritePath) : ''
+  )
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deleteCharacterId, setDeleteCharacterId] = useState<string | null>(null)
@@ -397,38 +402,35 @@ function EditDetailPanel({
 
         {/* Skin */}
         <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <Label>Skin</Label>
-            <div className="flex gap-1">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  const relativePath = await window.api.invoke<string | null>(IPC_COMMANDS.ASSET_UPLOAD, 'skin')
-                  if (relativePath) setSpritePath(`assets/${relativePath}`)
-                }}
-                disabled={isSubmitting}
-              >
-                Upload
+          <Label>Skin</Label>
+          <div className="flex items-center gap-3">
+            {skinPreviewUrl ? (
+              <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-md border bg-muted">
+                <img src={skinPreviewUrl} alt="Current skin" className="h-full w-full object-contain" style={{ imageRendering: 'pixelated' }} />
+              </div>
+            ) : (
+              <div className="flex h-16 w-16 items-center justify-center rounded-md border bg-muted">
+                <span className="text-xs text-muted-foreground">None</span>
+              </div>
+            )}
+            <div className="flex flex-col gap-1">
+              <Button type="button" variant="outline" size="sm" onClick={() => setShowSkinPicker(true)} disabled={isSubmitting}>
+                Change
               </Button>
               {spritePath && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSpritePath('')}
-                  disabled={isSubmitting}
-                >
+                <Button type="button" variant="ghost" size="sm" onClick={() => setSpritePath('')} disabled={isSubmitting}>
                   Remove
                 </Button>
               )}
             </div>
           </div>
-          <SkinGrid
-            currentSkin={spritePath}
-            onSelect={(path) => setSpritePath(path)}
-          />
+          {showSkinPicker && (
+            <SkinPickerModal
+              currentSkin={spritePath}
+              onSelect={(path) => setSpritePath(path)}
+              onClose={() => setShowSkinPicker(false)}
+            />
+          )}
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
