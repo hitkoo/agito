@@ -30,6 +30,7 @@ export interface TerminalSnapshot {
   cols: number
   rows: number
   isAlive: boolean
+  bootstrapping: boolean
 }
 
 interface TerminalSession {
@@ -42,6 +43,7 @@ interface TerminalSession {
   snapshotDirty: boolean
   serializedSnapshot: string
   parseQueue: Promise<void>
+  bootstrapping: boolean
 }
 
 interface SpawnHooks {
@@ -70,6 +72,7 @@ function createHeadlessSession(characterId: string): TerminalSession {
     snapshotDirty: true,
     serializedSnapshot: '',
     parseQueue: Promise.resolve(),
+    bootstrapping: false,
   }
 }
 
@@ -130,11 +133,13 @@ export class TerminalSessionService {
     })
 
     session.pty = proc
+    session.bootstrapping = true
 
     proc.onData((data) => {
       if (this.sessions.get(characterId) !== session) return
       const seq = session.seq + 1
       session.seq = seq
+      session.bootstrapping = false
       this.queueTerminalWrite(session, data, seq)
       hooks.onData?.(data, seq)
     })
@@ -142,6 +147,7 @@ export class TerminalSessionService {
     proc.onExit((event) => {
       if (this.sessions.get(characterId) !== session) return
       session.pty = null
+      session.bootstrapping = false
       session.parseQueue = session.parseQueue
         .catch(() => undefined)
         .then(() => {
@@ -163,6 +169,7 @@ export class TerminalSessionService {
         cols: 80,
         rows: 24,
         isAlive: false,
+        bootstrapping: false,
       }
     }
 
@@ -178,7 +185,12 @@ export class TerminalSessionService {
       cols: session.terminal.cols,
       rows: session.terminal.rows,
       isAlive: session.pty !== null,
+      bootstrapping: session.bootstrapping,
     }
+  }
+
+  hasSession(characterId: string): boolean {
+    return this.sessions.has(characterId)
   }
 
   write(characterId: string, data: string): void {

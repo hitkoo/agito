@@ -6,7 +6,7 @@ import type { Character, ScannedSession } from '../../../shared/types'
 import {
   getTerminalDockRenderMode,
   isTerminalDockOwner,
-  shouldAutoResumeTerminal,
+  shouldRenderAssignedTerminal,
 } from '../../../shared/terminal-dock-state'
 import { TerminalView } from './TerminalView'
 import { toast } from 'sonner'
@@ -57,32 +57,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
   // Characters with assigned sessions (PTY may or may not be running)
   const assignedChars = characters.filter((c) => c.currentSessionId !== null)
 
-  // Track which PTYs are actually alive
-  const [alivePtys, setAlivePtys] = useState<Set<string>>(new Set())
-  const [checkedPtys, setCheckedPtys] = useState<Set<string>>(new Set())
-  useEffect(() => {
-    let cancelled = false
-    async function check(): Promise<void> {
-      const ids = Array.from(
-        new Set(
-          [...assignedChars.map((c) => c.id), dock.activeCharacterId].filter((id): id is string => Boolean(id))
-        )
-      )
-      const aliveIds = await window.api.invoke<string[]>(IPC_COMMANDS.PTY_GET_ALIVE_IDS, ids)
-      const alive = new Set(aliveIds)
-      if (!cancelled) {
-        setAlivePtys(alive)
-        setCheckedPtys(new Set(ids))
-      }
-    }
-    void check()
-    // Re-check when characters change (session started/stopped)
-    return () => { cancelled = true }
-  }, [assignedChars.map((c) => `${c.id}:${c.currentSessionId}:${c.status}`).join(), dock.activeCharacterId])
-
   const activeCharHasSession = assignedChars.some((c) => c.id === dock.activeCharacterId)
-  const activeCharAliveKnown = checkedPtys.has(dock.activeCharacterId ?? '')
-  const activeCharPtyAlive = alivePtys.has(dock.activeCharacterId ?? '')
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
   const renderMode = getTerminalDockRenderMode({
     detachedMode,
@@ -132,58 +107,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
     }
   }, [dock.activeCharacterId, renderMode])
 
-  // Only show tabs for characters with alive PTYs + the currently active character
-  const visibleChars = assignedChars.filter((c) => alivePtys.has(c.id) || c.id === dock.activeCharacterId)
-
-  // Auto-resume: when active character has session but PTY is dead, resume automatically
-  // Cooldown prevents rapid retry loops when sessions die immediately after spawn
-  const [resumingChars, setResumingChars] = useState<Set<string>>(new Set())
-  const resumeFailures = useRef<Map<string, { count: number; lastAttempt: number }>>(new Map())
-  useEffect(() => {
-    if (!shouldAutoResumeTerminal({
-      renderMode,
-      activeCharacterId: dock.activeCharacterId,
-      hasAssignedSession: activeCharHasSession,
-      ptyAlive: !activeCharAliveKnown ? true : activeCharPtyAlive,
-      isResuming: resumingChars.has(dock.activeCharacterId ?? ''),
-    })) return
-
-    const char = characters.find((c) => c.id === dock.activeCharacterId)
-    if (!char?.currentSessionId) return
-
-    const charId = dock.activeCharacterId
-    if (!charId) return
-
-    // Cooldown: max 2 retries, 5s cooldown between attempts
-    const failure = resumeFailures.current.get(charId)
-    if (failure) {
-      if (failure.count >= 2) return // stop retrying after 2 failures
-      if (Date.now() - failure.lastAttempt < 5000) return // 5s cooldown
-    }
-
-    setResumingChars((prev) => new Set(prev).add(charId))
-
-    ;(async () => {
-      try {
-        await window.api.invoke(IPC_COMMANDS.SESSION_RESUME, {
-          characterId: charId,
-          sessionId: char.currentSessionId,
-        })
-        await loadCharacters()
-        setAlivePtys((prev) => new Set(prev).add(charId))
-        resumeFailures.current.delete(charId) // reset on success
-      } catch (err) {
-        const prev = resumeFailures.current.get(charId) ?? { count: 0, lastAttempt: 0 }
-        resumeFailures.current.set(charId, { count: prev.count + 1, lastAttempt: Date.now() })
-        toast.error(err instanceof Error ? err.message : String(err))
-        // Clear invalid session so user gets assign view
-        await window.api.invoke(IPC_COMMANDS.SESSION_STOP, { characterId: charId })
-        await loadCharacters()
-      } finally {
-        setResumingChars((prev) => { const next = new Set(prev); next.delete(charId); return next })
-      }
-    })()
-  }, [renderMode, dock.activeCharacterId, activeCharHasSession, activeCharPtyAlive, characters, loadCharacters, resumingChars])
+  const visibleChars = assignedChars
 
   // Auto-center on first open
   const [initialized, setInitialized] = useState(false)
@@ -342,6 +266,11 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
   const activeCharacter = dock.activeCharacterId
     ? characters.find((c) => c.id === dock.activeCharacterId) ?? null
     : null
+  const shouldRenderTerminal = shouldRenderAssignedTerminal({
+    activeCharacterId: dock.activeCharacterId,
+    hasAssignedSession: activeCharHasSession,
+  })
+  const activeTerminalCharacterId = shouldRenderTerminal ? dock.activeCharacterId : null
 
   return (
     <>
@@ -502,24 +431,18 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         </div>
       </div>
 
-      {dock.activeCharacterId && activeCharHasSession && activeCharPtyAlive && (
+      {activeTerminalCharacterId && (
         <div className="flex-1 overflow-hidden min-h-0">
           <TerminalView
-            key={`${dock.activeCharacterId}-${refreshKeys[dock.activeCharacterId] ?? 0}`}
-            characterId={dock.activeCharacterId}
+            key={`${activeTerminalCharacterId}-${refreshKeys[activeTerminalCharacterId] ?? 0}`}
+            characterId={activeTerminalCharacterId}
             isActiveOwner={isActiveOwner}
+            engine={activeCharacter?.engine ?? 'claude-code'}
           />
         </div>
       )}
 
-      {/* Resuming indicator when session assigned but PTY not yet alive */}
-      {dock.activeCharacterId && activeCharHasSession && !activeCharPtyAlive && (
-        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-          Resuming session...
-        </div>
-      )}
-
-      {dock.activeCharacterId && !activeCharacter && !activeCharPtyAlive && (
+      {dock.activeCharacterId && !activeCharacter && (
         <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
           Loading terminal...
         </div>

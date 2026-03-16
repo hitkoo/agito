@@ -4,7 +4,10 @@ import {
   canHydrateTerminalViewport,
   getTerminalDockRenderMode,
   isTerminalDockOwner,
+  shouldScheduleTrailingTerminalResize,
+  shouldKeepTerminalLoading,
   shouldAutoResumeTerminal,
+  shouldRenderAssignedTerminal,
   shouldSendPtyResize,
 } from '../src/shared/terminal-dock-state'
 
@@ -127,7 +130,7 @@ describe('buildInitialTerminalReplay', () => {
   test('keeps serialized snapshot content and appends only newer queued chunks', () => {
     expect(
       buildInitialTerminalReplay(
-        { serialized: 'snapshot', seq: 2, cols: 80, rows: 24, isAlive: true },
+        { serialized: 'snapshot', seq: 2, cols: 80, rows: 24, isAlive: true, bootstrapping: false },
         [
           { data: 'stale', seq: 1 },
           { data: 'dup', seq: 2 },
@@ -143,7 +146,7 @@ describe('buildInitialTerminalReplay', () => {
   test('can hydrate purely from queued live chunks when snapshot is empty', () => {
     expect(
       buildInitialTerminalReplay(
-        { serialized: '', seq: 0, cols: 80, rows: 24, isAlive: false },
+        { serialized: '', seq: 0, cols: 80, rows: 24, isAlive: false, bootstrapping: false },
         [
           { data: 'a', seq: 1 },
           { data: 'b', seq: 2 },
@@ -178,6 +181,74 @@ describe('canHydrateTerminalViewport', () => {
       canHydrateTerminalViewport({
         width: 800,
         height: 0,
+      })
+    ).toBe(false)
+  })
+})
+
+describe('shouldRenderAssignedTerminal', () => {
+  test('renders terminal view for any active assigned session without PTY liveness gating', () => {
+    expect(
+      shouldRenderAssignedTerminal({
+        activeCharacterId: 'char-1',
+        hasAssignedSession: true,
+      })
+    ).toBe(true)
+  })
+
+  test('does not render terminal view when there is no assigned session', () => {
+    expect(
+      shouldRenderAssignedTerminal({
+        activeCharacterId: 'char-1',
+        hasAssignedSession: false,
+      })
+    ).toBe(false)
+  })
+})
+
+describe('shouldKeepTerminalLoading', () => {
+  test('keeps spinner up for empty bootstrapping snapshots', () => {
+    expect(
+      shouldKeepTerminalLoading({
+        snapshot: {
+          serialized: '',
+          seq: 0,
+          cols: 80,
+          rows: 24,
+          isAlive: true,
+          bootstrapping: true,
+        },
+        replayData: '',
+      })
+    ).toBe(true)
+  })
+
+  test('reveals terminal once replay data exists or bootstrapping is over', () => {
+    expect(
+      shouldKeepTerminalLoading({
+        snapshot: {
+          serialized: '',
+          seq: 0,
+          cols: 80,
+          rows: 24,
+          isAlive: true,
+          bootstrapping: true,
+        },
+        replayData: 'prompt',
+      })
+    ).toBe(false)
+
+    expect(
+      shouldKeepTerminalLoading({
+        snapshot: {
+          serialized: '',
+          seq: 0,
+          cols: 80,
+          rows: 24,
+          isAlive: false,
+          bootstrapping: false,
+        },
+        replayData: '',
       })
     ).toBe(false)
   })
@@ -226,5 +297,12 @@ describe('shouldSendPtyResize', () => {
         rows: 40,
       })
     ).toBe(true)
+  })
+})
+
+describe('shouldScheduleTrailingTerminalResize', () => {
+  test('enables trailing resize resend only for codex', () => {
+    expect(shouldScheduleTrailingTerminalResize('codex')).toBe(true)
+    expect(shouldScheduleTrailingTerminalResize('claude-code')).toBe(false)
   })
 })

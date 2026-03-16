@@ -44,6 +44,7 @@ export interface TerminalSessionSnapshot {
   cols: number
   rows: number
   isAlive: boolean
+  bootstrapping: boolean
 }
 
 export interface TerminalViewportMeasureInput {
@@ -105,6 +106,24 @@ export function shouldAutoResumeTerminal(input: TerminalAutoResumeInput): boolea
   if (input.ptyAlive) return false
   if (input.isResuming) return false
   return true
+}
+
+export function shouldRenderAssignedTerminal(input: {
+  activeCharacterId: string | null
+  hasAssignedSession: boolean
+}): boolean {
+  return Boolean(input.activeCharacterId && input.hasAssignedSession)
+}
+
+export function shouldKeepTerminalLoading(input: {
+  snapshot: TerminalSessionSnapshot
+  replayData: string
+}): boolean {
+  return input.snapshot.bootstrapping && input.replayData.length === 0
+}
+
+export function shouldScheduleTrailingTerminalResize(engine: 'claude-code' | 'codex'): boolean {
+  return engine === 'codex'
 }
 
 export function shouldSendPtyResize(input: PtyResizeGuardInput): boolean {

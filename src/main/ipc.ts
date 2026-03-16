@@ -114,6 +114,37 @@ export function registerIPCHandlers(store: AgitoStore): void {
     })
   }
 
+  const readCharacterSoul = (character: Character): string | undefined => {
+    if (!character.soul) return undefined
+    try {
+      return readFileSync(join(store.getBasePath(), character.soul), 'utf-8')
+    } catch {
+      return undefined
+    }
+  }
+
+  const ensureTerminalSession = (characterId: string): void => {
+    if (terminalSessions.hasSession(characterId)) return
+
+    const characters = store.getCharacters()
+    const character = characters.find((candidate) => candidate.id === characterId)
+    if (!character?.currentSessionId) return
+
+    const sessionMapping = store.getSessions().find((session) => session.sessionId === character.currentSessionId)
+    if (!sessionMapping) return
+    if (!existsSync(sessionMapping.workingDirectory)) return
+
+    const adapter = getEngineAdapter(character.engine)
+    const soulContent = readCharacterSoul(character)
+    const spawnArgs = adapter.buildSpawnArgs({
+      sessionId: character.currentSessionId,
+      soulPath: soulContent,
+      workingDirectory: sessionMapping.workingDirectory,
+    })
+
+    spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, sessionMapping.workingDirectory)
+  }
+
   // --- Store operations ---
 
   ipcMain.handle(IPC_COMMANDS.STORE_READ, () => {
@@ -166,6 +197,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
   })
 
   ipcMain.handle(IPC_COMMANDS.TERMINAL_GET_SNAPSHOT, async (_, characterId: string) => {
+    ensureTerminalSession(characterId)
     return terminalSessions.getSnapshot(characterId)
   })
 
@@ -254,14 +286,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
       const adapter = getEngineAdapter(character.engine)
 
-      let soulContent: string | undefined
-      if (character.soul) {
-        try {
-          soulContent = readFileSync(join(store.getBasePath(), character.soul), 'utf-8')
-        } catch {
-          // soul file missing — proceed without it
-        }
-      }
+      const soulContent = readCharacterSoul(character)
 
       const spawnArgs = adapter.buildSpawnArgs({ soulPath: soulContent, workingDirectory })
       spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
@@ -322,14 +347,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
       const adapter = getEngineAdapter(character.engine)
 
-      let soulContent: string | undefined
-      if (character.soul) {
-        try {
-          soulContent = readFileSync(join(store.getBasePath(), character.soul), 'utf-8')
-        } catch {
-          // soul file missing — proceed without it
-        }
-      }
+      const soulContent = readCharacterSoul(character)
 
       // Validate working directory exists
       if (!existsSync(workingDirectory)) {

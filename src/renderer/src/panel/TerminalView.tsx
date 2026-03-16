@@ -6,17 +6,23 @@ import '@xterm/xterm/css/xterm.css'
 import {
   buildInitialTerminalReplay,
   canHydrateTerminalViewport,
+  shouldKeepTerminalLoading,
+  shouldScheduleTrailingTerminalResize,
   shouldSendPtyResize,
   type TerminalReplayChunk,
 } from '../../../shared/terminal-dock-state'
+import type { EngineType } from '../../../shared/types'
 import { electronTerminalTransport } from './terminal-transport'
 
 interface TerminalViewProps {
   characterId: string
   isActiveOwner: boolean
+  engine: EngineType
 }
 
-export function TerminalView({ characterId, isActiveOwner }: TerminalViewProps): ReactElement {
+const CODEX_TRAILING_RESIZE_MS = 180
+
+export function TerminalView({ characterId, isActiveOwner, engine }: TerminalViewProps): ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -69,6 +75,7 @@ export function TerminalView({ characterId, isActiveOwner }: TerminalViewProps):
     let hydrated = false
     let snapshotSeq = 0
     let revealTimer: number | null = null
+    let trailingResizeTimer: number | null = null
     const queuedChunks: TerminalReplayChunk[] = []
 
     const revealTerminal = (): void => {
@@ -123,6 +130,16 @@ export function TerminalView({ characterId, isActiveOwner }: TerminalViewProps):
       }
 
       void electronTerminalTransport.resize(characterId, measurement.cols, measurement.rows)
+
+      if (!shouldScheduleTrailingTerminalResize(engine)) return
+      if (trailingResizeTimer !== null) {
+        window.clearTimeout(trailingResizeTimer)
+      }
+      trailingResizeTimer = window.setTimeout(() => {
+        trailingResizeTimer = null
+        if (!ownerRef.current) return
+        void electronTerminalTransport.resize(characterId, measurement.cols, measurement.rows)
+      }, CODEX_TRAILING_RESIZE_MS)
     }
 
     const flushQueuedReplay = (onDone: () => void): void => {
@@ -203,9 +220,14 @@ export function TerminalView({ characterId, isActiveOwner }: TerminalViewProps):
         return
       }
 
+      if (shouldKeepTerminalLoading({ snapshot, replayData: initialReplay.data })) {
+        hydrating = false
+        return
+      }
+
       ensureOpened()
       finalizeHydration(focusTerminal)
-      if (!snapshot.isAlive) {
+      if (!snapshot.isAlive && !snapshot.bootstrapping) {
         revealTimer = window.setTimeout(() => {
           revealTimer = null
           revealTerminal()
@@ -251,6 +273,9 @@ export function TerminalView({ characterId, isActiveOwner }: TerminalViewProps):
       disposed = true
       if (revealTimer !== null) {
         window.clearTimeout(revealTimer)
+      }
+      if (trailingResizeTimer !== null) {
+        window.clearTimeout(trailingResizeTimer)
       }
       dataDisposable.dispose()
       unsubscribe()

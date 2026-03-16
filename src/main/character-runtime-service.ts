@@ -265,7 +265,10 @@ export class CharacterRuntimeService {
     }
   }
 
-  private syncFromParser(entry: RuntimeEntry): void {
+  private syncFromParser(
+    entry: RuntimeEntry,
+    options: { suppressUnreadDone?: boolean } = {}
+  ): void {
     const parserState = entry.parser?.getState()
     if (!parserState) {
       this.updateState(entry)
@@ -281,6 +284,7 @@ export class CharacterRuntimeService {
     entry.state.needsApproval = parserState.needsApproval
     entry.state.needsInput = parserState.needsInput
     entry.state.unreadDone =
+      !options.suppressUnreadDone &&
       !entry.state.needsApproval &&
       !entry.state.needsInput &&
       parserState.unreadDone
@@ -365,7 +369,7 @@ export class CharacterRuntimeService {
         if (!line.trim()) continue
         entry.parser.ingestLine(line)
       }
-      this.syncFromParser(entry)
+      this.syncFromParser(entry, { suppressUnreadDone: fromStart })
     } catch {
       // ignore transcript read errors and keep the last semantic state
     }
