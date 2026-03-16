@@ -6,6 +6,7 @@ import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 export function CharacterContextMenu(): ReactElement | null {
   const contextMenu = useUIStore((s) => s.contextMenu)
   const closeContextMenu = useUIStore((s) => s.closeContextMenu)
+  const openTerminalDock = useUIStore((s) => s.openTerminalDock)
   const characters = useCharacterStore((s) => s.characters)
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
 
@@ -37,19 +38,21 @@ export function CharacterContextMenu(): ReactElement | null {
     }
   }, [contextMenu, closeContextMenu])
 
-  const handleStartSession = useCallback(async () => {
+  const handleAssignSession = useCallback(async () => {
     if (!contextMenu) return
+    const characterId = contextMenu.characterId
     closeContextMenu()
-    const dir = await window.api.invoke<string | null>(IPC_COMMANDS.DIALOG_OPEN_FOLDER)
-    if (!dir) return
-    await window.api.invoke(IPC_COMMANDS.SESSION_START, {
-      characterId: contextMenu.characterId,
-      workingDirectory: dir,
-    })
-    await loadCharacters()
-  }, [contextMenu, closeContextMenu, loadCharacters])
+    // Stop current session if running
+    const char = useCharacterStore.getState().characters.find((c) => c.id === characterId)
+    if (char?.currentSessionId) {
+      await window.api.invoke(IPC_COMMANDS.SESSION_STOP, { characterId })
+      await loadCharacters()
+    }
+    // Open terminal dock — SessionAssignView will show automatically
+    openTerminalDock(characterId)
+  }, [contextMenu, closeContextMenu, loadCharacters, openTerminalDock])
 
-  const handleStopSession = useCallback(async () => {
+  const handleUnassignSession = useCallback(async () => {
     if (!contextMenu) return
     closeContextMenu()
     await window.api.invoke(IPC_COMMANDS.SESSION_STOP, {
@@ -72,6 +75,9 @@ export function CharacterContextMenu(): ReactElement | null {
 
   if (!contextMenu || !character) return null
 
+  const menuItemClass =
+    'relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground'
+
   return (
     <div
       className="fixed z-[200] min-w-[160px] rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
@@ -80,19 +86,18 @@ export function CharacterContextMenu(): ReactElement | null {
       onContextMenu={(e) => e.preventDefault()}
     >
       {character.currentSessionId === null ? (
-        <button
-          className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-          onClick={handleStartSession}
-        >
-          Start Session
+        <button className={menuItemClass} onClick={handleAssignSession}>
+          Assign Session
         </button>
       ) : (
-        <button
-          className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-          onClick={handleStopSession}
-        >
-          Stop Session
-        </button>
+        <>
+          <button className={menuItemClass} onClick={handleAssignSession}>
+            Assign Other Session
+          </button>
+          <button className={menuItemClass} onClick={handleUnassignSession}>
+            Unassign Session
+          </button>
+        </>
       )}
     </div>
   )

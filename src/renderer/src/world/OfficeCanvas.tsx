@@ -488,6 +488,23 @@ function StatusBadge({
 }
 
 // ---------------------------------------------------------------------------
+// HoverBorder — subtle solid border for runtime hover feedback
+// ---------------------------------------------------------------------------
+
+function HoverBorder({ w, h }: { w: number; h: number }): ReactElement {
+  const draw = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.lineStyle(1.5, 0xffffff, 0.35)
+      g.drawRoundedRect(-1, -1, w + 2, h + 2, 4)
+    },
+    [w, h]
+  )
+
+  return <Graphics draw={draw} />
+}
+
+// ---------------------------------------------------------------------------
 // SelectionBorder — dashed border around selected item
 // ---------------------------------------------------------------------------
 
@@ -1075,9 +1092,9 @@ function CharacterSprite({
       pointerup={isLayout ? onPointerUp : undefined}
       pointerupoutside={isLayout ? onPointerUp : undefined}
       rightclick={onRightClickHandler}
-      cursor={isLayout ? 'grab' : 'default'}
-      pointerover={isLayout ? () => { if (!useUIStore.getState().isDraggingItem) setIsHoveredChar(true) } : undefined}
-      pointerout={isLayout ? () => { if (!isResizingChar.current) setIsHoveredChar(false) } : undefined}
+      cursor={isLayout ? 'grab' : 'pointer'}
+      pointerover={() => { if (!useUIStore.getState().isDraggingItem) setIsHoveredChar(true) }}
+      pointerout={() => { if (!isResizingChar.current) setIsHoveredChar(false) }}
     >
       {texture ? (
         <>
@@ -1087,6 +1104,7 @@ function CharacterSprite({
       ) : (
         statusEffect
       )}
+      {!isLayout && isHoveredChar && <HoverBorder w={w} h={h} />}
       <Text
         text={character.name}
         x={w / 2}
