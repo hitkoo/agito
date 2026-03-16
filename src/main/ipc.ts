@@ -217,7 +217,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
   ipcMain.handle(
     IPC_COMMANDS.CHARACTER_CREATE,
-    async (_, args: { name: string; engine: EngineType; soul?: string }) => {
+    async (_, args: { name: string; soul?: string; skin?: string }) => {
       const { nanoid } = await import('nanoid')
       const characters = store.getCharacters()
 
@@ -227,9 +227,9 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const newCharacter: Character = {
         id: nanoid(),
         name: args.name,
-        engine: args.engine,
+        engine: null,
         soul: args.soul ?? '',
-        skin: '',
+        skin: args.skin ?? '',
         gridPosition,
         currentSessionId: null,
         sessionHistory: [],
@@ -272,9 +272,9 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
   ipcMain.handle(
     IPC_COMMANDS.SESSION_START,
-    async (_, args: { characterId: string; workingDirectory: string }) => {
+    async (_, args: { characterId: string; workingDirectory: string; engine: EngineType }) => {
       const { nanoid } = await import('nanoid')
-      const { characterId, workingDirectory } = args
+      const { characterId, workingDirectory, engine } = args
 
       if (!existsSync(workingDirectory)) {
         throw new Error(`Working directory not found: ${workingDirectory}`)
@@ -284,7 +284,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const character = characters.find((c) => c.id === characterId)
       if (!character) throw new Error(`Character not found: ${characterId}`)
 
-      const adapter = getEngineAdapter(character.engine)
+      const adapter = getEngineAdapter(engine)
 
       const soulContent = readCharacterSoul(character)
 
@@ -297,7 +297,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const sessionMapping: SessionMapping = {
         characterId,
         sessionId,
-        engineType: character.engine,
+        engineType: engine,
         workingDirectory,
         createdAt: now,
         lastActiveAt: now,
@@ -309,13 +309,13 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const updatedHistory = [sessionId, ...character.sessionHistory].slice(0, MAX_SESSION_HISTORY)
       const updatedCharacters = characters.map((c) =>
         c.id === characterId
-          ? { ...c, currentSessionId: sessionId, sessionHistory: updatedHistory }
+          ? { ...c, currentSessionId: sessionId, sessionHistory: updatedHistory, engine }
           : c
       )
       store.saveCharacters(updatedCharacters)
       runtimeService.startSession({
         characterId,
-        engine: character.engine,
+        engine,
         sessionId,
         workingDirectory,
       })
@@ -337,15 +337,26 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
       // Resolve working directory: use provided, or look up from session mapping
       let workingDirectory = args.workingDirectory
+      const sessions = store.getSessions()
+      const existingMapping = sessions.find((s) => s.sessionId === sessionId)
       if (!workingDirectory) {
-        const mapping = store.getSessions().find((s) => s.sessionId === sessionId)
-        workingDirectory = mapping?.workingDirectory
+        workingDirectory = existingMapping?.workingDirectory
       }
       if (!workingDirectory) {
         throw new Error('Working directory not found for this session')
       }
 
-      const adapter = getEngineAdapter(character.engine)
+      // Resolve engine: from mapping, or fall back to character.engine
+      let engineType: EngineType
+      if (existingMapping) {
+        engineType = existingMapping.engineType
+      } else if (character.engine !== null) {
+        engineType = character.engine
+      } else {
+        throw new Error('Cannot resume session: engine type is unknown. Please start a new session.')
+      }
+
+      const adapter = getEngineAdapter(engineType)
 
       const soulContent = readCharacterSoul(character)
 
@@ -358,8 +369,6 @@ export function registerIPCHandlers(store: AgitoStore): void {
       spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
 
       const now = new Date().toISOString()
-      const sessions = store.getSessions()
-      const existingMapping = sessions.find((s) => s.sessionId === sessionId)
       if (existingMapping) {
         store.saveSessions(sessions.map((s) =>
           s.sessionId === sessionId ? { ...s, lastActiveAt: now } : s
@@ -369,7 +378,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
         sessions.push({
           characterId,
           sessionId,
-          engineType: character.engine,
+          engineType,
           workingDirectory,
           createdAt: now,
           lastActiveAt: now,
@@ -379,13 +388,13 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
       const updatedCharacters = characters.map((c) =>
         c.id === characterId
-          ? { ...c, currentSessionId: sessionId }
+          ? { ...c, currentSessionId: sessionId, engine: engineType }
           : c
       )
       store.saveCharacters(updatedCharacters)
       runtimeService.startSession({
         characterId,
-        engine: character.engine,
+        engine: engineType,
         sessionId,
         workingDirectory,
       })
@@ -405,7 +414,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
     const characters = store.getCharacters()
     const updatedCharacters = characters.map((c) =>
       c.id === characterId
-        ? { ...c, currentSessionId: null }
+        ? { ...c, currentSessionId: null, engine: null, status: 'idle' as const }
         : c
     )
     store.saveCharacters(updatedCharacters)
@@ -749,7 +758,10 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
 }
 
-function getEngineAdapter(engineType: EngineType): EngineAdapter {
+function getEngineAdapter(engineType: EngineType | null): EngineAdapter {
+  if (engineType === null) {
+    throw new Error('Engine type is not set for this character. Please start a new session and select an engine.')
+  }
   switch (engineType) {
     case 'claude-code':
       return claudeCodeAdapter

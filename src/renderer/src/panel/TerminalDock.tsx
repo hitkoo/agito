@@ -2,13 +2,15 @@ import { type ReactElement, useCallback, useEffect, useRef, useState } from 'rea
 import { useCharacterStore } from '../stores/character-store'
 import { useUIStore } from '../stores/ui-store'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
-import type { Character, ScannedSession } from '../../../shared/types'
+import type { AssetListEntry, Character, ScannedSession } from '../../../shared/types'
+import type { EngineType } from '../../../shared/types'
 import {
   getTerminalDockRenderMode,
   isTerminalDockOwner,
   shouldRenderAssignedTerminal,
 } from '../../../shared/terminal-dock-state'
 import { TerminalView } from './TerminalView'
+import { MoreVertical } from 'lucide-react'
 import { toast } from 'sonner'
 
 // ---------------------------------------------------------------------------
@@ -25,14 +27,9 @@ const STATUS_DOT_COLORS: Record<string, string> = {
   error: '#ff6b6b',
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  no_session: 'no session',
-  idle: 'idle',
-  running: 'running',
-  need_input: 'need input',
-  need_approval: 'need approval',
-  done: 'done',
-  error: 'error',
+const ENGINE_DISPLAY: Record<string, string> = {
+  'claude-code': 'Claude Code',
+  codex: 'Codex',
 }
 
 // ---------------------------------------------------------------------------
@@ -145,10 +142,11 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
   // --- Tab context menu ---
   const [tabContextMenu, setTabContextMenu] = useState<{ characterId: string; x: number; y: number } | null>(null)
 
-  const handleTabContextMenu = useCallback((characterId: string, e: React.MouseEvent) => {
+  const handleTabMoreButton = useCallback((characterId: string, e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setTabContextMenu({ characterId, x: e.clientX, y: e.clientY })
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setTabContextMenu({ characterId, x: rect.left, y: rect.bottom })
   }, [])
 
   // Close tab context menu on click outside or ESC
@@ -200,6 +198,85 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
     await window.api.invoke(IPC_COMMANDS.SESSION_STOP, { characterId: charId })
     await loadCharacters()
   }, [tabContextMenu, loadCharacters])
+
+  // --- Add character (+) dropdown ---
+  const [addDropdown, setAddDropdown] = useState<{ x: number; y: number } | null>(null)
+
+  const handleAddButtonClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setAddDropdown({ x: rect.left, y: rect.bottom })
+  }, [])
+
+  // Close add dropdown on click outside or ESC
+  useEffect(() => {
+    if (!addDropdown) return
+    const close = (): void => setAddDropdown(null)
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') close() }
+    const timer = setTimeout(() => {
+      window.addEventListener('mousedown', close)
+      window.addEventListener('keydown', onKey)
+    }, 0)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [addDropdown])
+
+  // Unassigned characters not currently in the tab bar
+  const tabCharacterIds = new Set([
+    ...visibleChars.map((c) => c.id),
+    ...(dock.activeCharacterId && !visibleChars.some((c) => c.id === dock.activeCharacterId)
+      ? [dock.activeCharacterId]
+      : []),
+  ])
+  const unassignedChars = characters.filter(
+    (c) => c.currentSessionId === null && !tabCharacterIds.has(c.id)
+  )
+
+  const handleAddUnassigned = useCallback((characterId: string) => {
+    setAddDropdown(null)
+    setDockActiveCharacter(characterId)
+    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_SET_ACTIVE_CHARACTER, characterId)
+  }, [setDockActiveCharacter])
+
+  const handleCreateCharacter = useCallback(async () => {
+    setAddDropdown(null)
+    try {
+      // Generate next available name
+      const existingNames = new Set(characters.map((c) => c.name))
+      let idx = 1
+      let name = ''
+      while (true) {
+        name = `new_${String(idx).padStart(2, '0')}`
+        if (!existingNames.has(name)) break
+        idx++
+      }
+
+      // Pick a random skin
+      const assets = await window.api.invoke<AssetListEntry[]>(IPC_COMMANDS.ASSET_LIST)
+      const skins = (assets ?? []).filter((a) => a.category === 'skin')
+      const randomSkin = skins.length > 0 ? skins[Math.floor(Math.random() * skins.length)] : null
+
+      await window.api.invoke(IPC_COMMANDS.CHARACTER_CREATE, {
+        name,
+        ...(randomSkin ? { skin: randomSkin.relativePath } : {}),
+      })
+      await loadCharacters()
+
+      // Find the newly created character and set it active
+      const updated = useCharacterStore.getState().characters
+      const newChar = updated.find((c) => c.name === name)
+      if (newChar) {
+        setDockActiveCharacter(newChar.id)
+        void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_SET_ACTIVE_CHARACTER, newChar.id)
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create character.')
+    }
+  }, [characters, loadCharacters, setDockActiveCharacter])
 
   // --- Drag ---
   const onDragStart = useCallback(
@@ -271,6 +348,8 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
     hasAssignedSession: activeCharHasSession,
   })
   const activeTerminalCharacterId = shouldRenderTerminal ? dock.activeCharacterId : null
+
+  const menuItemClass = 'relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground'
 
   return (
     <>
@@ -372,7 +451,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
               isActive={c.id === dock.activeCharacterId}
               detachedMode={detachedMode}
               onClick={() => handleTabSelect(c.id)}
-              onContextMenu={(e) => handleTabContextMenu(c.id, e)}
+              onMoreClick={(e) => handleTabMoreButton(c.id, e)}
             />
           ))}
           {/* Show current character tab even if no active session */}
@@ -385,12 +464,23 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
                 isActive={true}
                 detachedMode={detachedMode}
                 onClick={() => {}}
-                onContextMenu={(e) => handleTabContextMenu(char.id, e)}
+                onMoreClick={(e) => handleTabMoreButton(char.id, e)}
               />
             ) : (
               <span className="text-xs text-muted-foreground px-3 py-2">No active sessions</span>
             )
           })()}
+
+          {/* + Add character button */}
+          <button
+            className="flex items-center justify-center w-6 h-6 ml-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors text-sm font-medium shrink-0"
+            onClick={handleAddButtonClick}
+            data-no-drag
+            style={detachedMode ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}}
+            title="Add character"
+          >
+            +
+          </button>
         </div>
         <div
           className="flex items-center gap-0.5 px-1.5 shrink-0"
@@ -476,11 +566,10 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
     </div>
     )}
 
-    {/* Tab context menu */}
+    {/* Tab context menu (triggered by ⋯ button) */}
     {tabContextMenu && (() => {
       const char = characters.find((c) => c.id === tabContextMenu.characterId)
       if (!char) return null
-      const menuItemClass = 'relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground'
       return (
         <div
           className="fixed z-[200] min-w-[160px] rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
@@ -509,6 +598,33 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         </div>
       )
     })()}
+
+    {/* Add character dropdown */}
+    {addDropdown && (
+      <div
+        className="fixed z-[200] min-w-[180px] rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+        style={{ left: addDropdown.x, top: addDropdown.y }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {unassignedChars.map((c) => (
+          <AddCharacterItem
+            key={c.id}
+            character={c}
+            onClick={() => handleAddUnassigned(c.id)}
+          />
+        ))}
+        {unassignedChars.length > 0 && (
+          <div className="my-1 h-px bg-border" />
+        )}
+        <button
+          className={menuItemClass}
+          onClick={handleCreateCharacter}
+        >
+          Create Character
+        </button>
+      </div>
+    )}
     </>
   )
 }
@@ -522,13 +638,13 @@ function TabButton({
   isActive,
   detachedMode,
   onClick,
-  onContextMenu,
+  onMoreClick,
 }: {
   character: Character
   isActive: boolean
   detachedMode: boolean
   onClick: () => void
-  onContextMenu: (e: React.MouseEvent) => void
+  onMoreClick: (e: React.MouseEvent) => void
 }): ReactElement {
   const [skinPreview, setSkinPreview] = useState<string | null>(null)
 
@@ -541,35 +657,85 @@ function TabButton({
   const dotColor = STATUS_DOT_COLORS[character.status] || STATUS_DOT_COLORS.idle
 
   return (
-    <button
-      className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-t transition-colors whitespace-nowrap ${
+    <div
+      className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium rounded-t transition-colors whitespace-nowrap ${
         isActive
           ? 'bg-background text-foreground border-b-2 border-primary'
           : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
       }`}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
       data-no-drag
       style={detachedMode ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}}
+    >
+      {/* Status dot — leftmost */}
+      <span
+        className="w-2 h-2 rounded-full inline-block shrink-0"
+        style={{ backgroundColor: dotColor }}
+      />
+      {/* Avatar */}
+      <button onClick={onClick} className="flex items-center gap-1 min-w-0">
+        {skinPreview ? (
+          <img
+            src={skinPreview}
+            alt=""
+            className="w-5 h-5 rounded-sm object-contain shrink-0"
+            style={{ imageRendering: 'pixelated' }}
+          />
+        ) : (
+          <span className="w-5 h-5 rounded-sm bg-muted flex items-center justify-center text-[10px] shrink-0">
+            {character.name[0]}
+          </span>
+        )}
+        <span className="truncate">{character.name}</span>
+      </button>
+      {/* More button — rightmost */}
+      <button
+        className="flex items-center justify-center w-5 h-5 rounded hover:bg-muted/70 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+        onClick={onMoreClick}
+        title="More options"
+      >
+        <MoreVertical size={12} />
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Add character dropdown item (shows skin avatar + name)
+// ---------------------------------------------------------------------------
+
+function AddCharacterItem({
+  character,
+  onClick,
+}: {
+  character: Character
+  onClick: () => void
+}): ReactElement {
+  const [skinPreview, setSkinPreview] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!character.skin) return
+    const relPath = character.skin.startsWith('assets/') ? character.skin.slice(7) : character.skin
+    window.api.invoke<string | null>(IPC_COMMANDS.ASSET_READ_BASE64, relPath).then(setSkinPreview)
+  }, [character.skin])
+
+  return (
+    <button
+      className="relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+      onClick={onClick}
     >
       {skinPreview ? (
         <img
           src={skinPreview}
           alt=""
-          className="w-5 h-5 rounded-sm object-contain"
+          className="w-5 h-5 rounded-sm object-contain shrink-0"
           style={{ imageRendering: 'pixelated' }}
         />
       ) : (
-        <span className="w-5 h-5 rounded-sm bg-muted flex items-center justify-center text-[10px]">
+        <span className="w-5 h-5 rounded-sm bg-muted flex items-center justify-center text-[10px] shrink-0">
           {character.name[0]}
         </span>
       )}
-      <span>{character.name}</span>
-      <span
-        className="w-2 h-2 rounded-full inline-block"
-        style={{ backgroundColor: dotColor }}
-      />
-      <span className="text-[10px] text-muted-foreground">{STATUS_LABELS[character.status]}</span>
+      <span className="truncate">{character.name}</span>
     </button>
   )
 }
@@ -577,6 +743,12 @@ function TabButton({
 // ---------------------------------------------------------------------------
 // SessionAssignView — shown when no active sessions in the dock
 // ---------------------------------------------------------------------------
+
+interface EngineDetectResult {
+  found: boolean
+  path?: string
+  version?: string
+}
 
 function SessionAssignView({
   character,
@@ -591,38 +763,73 @@ function SessionAssignView({
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set())
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set())
 
+  // Engine tab detection
+  const [detectedEngines, setDetectedEngines] = useState<EngineType[]>([])
+  const [selectedEngine, setSelectedEngine] = useState<EngineType | null>(null)
+
   useEffect(() => {
+    const engineKeys: EngineType[] = ['claude-code', 'codex']
+    Promise.all(
+      engineKeys.map(async (key) => {
+        try {
+          const result = await window.api.invoke<EngineDetectResult>(IPC_COMMANDS.ENGINE_DETECT_CLI, key)
+          return result?.found ? key : null
+        } catch {
+          return null
+        }
+      })
+    ).then((results) => {
+      const found = results.filter((r): r is EngineType => r !== null)
+      setDetectedEngines(found)
+      if (found.length > 0) {
+        setSelectedEngine(found[0])
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+    const engine = selectedEngine ?? character.engine
     setScanning(true)
     window.api.invoke<ScannedSession[]>(IPC_COMMANDS.SESSION_SCAN).then((sessions) => {
-      setScannedSessions((sessions ?? []).filter((s) => s.engineType === character.engine))
+      setScannedSessions((sessions ?? []).filter((s) => s.engineType === engine))
       setScanning(false)
     })
-  }, [character.engine])
+  }, [character.engine, selectedEngine])
 
   const handleNewSessionInDir = useCallback(
     async (dir: string) => {
       try {
-        await window.api.invoke(IPC_COMMANDS.SESSION_START, { characterId: character.id, workingDirectory: dir })
+        const engine = selectedEngine ?? character.engine
+        await window.api.invoke(IPC_COMMANDS.SESSION_START, {
+          characterId: character.id,
+          workingDirectory: dir,
+          engine,
+        })
         await loadCharacters()
         onSessionStarted()
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err))
       }
     },
-    [character.id, loadCharacters, onSessionStarted]
+    [character.id, character.engine, selectedEngine, loadCharacters, onSessionStarted]
   )
 
   const handleNewWorkDir = useCallback(async () => {
     const dir = await window.api.invoke<string | null>(IPC_COMMANDS.DIALOG_OPEN_FOLDER)
     if (!dir) return
     try {
-      await window.api.invoke(IPC_COMMANDS.SESSION_START, { characterId: character.id, workingDirectory: dir })
+      const engine = selectedEngine ?? character.engine
+      await window.api.invoke(IPC_COMMANDS.SESSION_START, {
+        characterId: character.id,
+        workingDirectory: dir,
+        engine,
+      })
       await loadCharacters()
       onSessionStarted()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     }
-  }, [character.id, loadCharacters, onSessionStarted])
+  }, [character.id, character.engine, selectedEngine, loadCharacters, onSessionStarted])
 
   const handleAssignSession = useCallback(
     async (sessionId: string, workingDirectory: string) => {
@@ -661,6 +868,25 @@ function SessionAssignView({
 
   return (
     <div className="flex-1 overflow-y-auto styled-scroll p-4 space-y-3" style={{ minHeight: 0 }}>
+      {/* Engine tabs */}
+      {detectedEngines.length > 1 && (
+        <div className="flex items-center gap-1 border-b border-border pb-2">
+          {detectedEngines.map((engine) => (
+            <button
+              key={engine}
+              className={`text-[11px] px-2.5 py-1 rounded-t transition-colors ${
+                selectedEngine === engine
+                  ? 'bg-background text-foreground border border-border border-b-background'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+              }`}
+              onClick={() => setSelectedEngine(engine)}
+            >
+              {ENGINE_DISPLAY[engine] ?? engine}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
           {scanning ? 'Scanning sessions...' : `${scannedSessions.length} sessions found`}
@@ -675,7 +901,7 @@ function SessionAssignView({
 
       {!scanning && scannedSessions.length === 0 && (
         <div className="text-center py-8">
-          <p className="text-sm text-muted-foreground mb-2">No {character.engine} sessions found</p>
+          <p className="text-sm text-muted-foreground mb-2">No {selectedEngine ?? character.engine} sessions found</p>
           <button
             className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             onClick={handleNewWorkDir}

@@ -1,7 +1,5 @@
 import { useState } from 'react'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
-import { SUPPORTED_ENGINES } from '../../../shared/constants'
-import type { EngineType } from '../../../shared/types'
 import { useCharacterStore } from '../stores/character-store'
 import {
   Dialog,
@@ -20,7 +18,6 @@ interface CreateCharacterDialogProps {
 
 export function CreateCharacterDialog({ onClose }: CreateCharacterDialogProps): JSX.Element {
   const [name, setName] = useState('')
-  const [engine, setEngine] = useState<EngineType>(SUPPORTED_ENGINES[0])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
@@ -35,7 +32,7 @@ export function CreateCharacterDialog({ onClose }: CreateCharacterDialogProps): 
     setIsSubmitting(true)
     setError(null)
     try {
-      await window.api.invoke(IPC_COMMANDS.CHARACTER_CREATE, { name: trimmed, engine })
+      await window.api.invoke(IPC_COMMANDS.CHARACTER_CREATE, { name: trimmed })
       await loadCharacters()
       onClose()
     } catch (err) {
@@ -63,23 +60,6 @@ export function CreateCharacterDialog({ onClose }: CreateCharacterDialogProps): 
               autoFocus
               disabled={isSubmitting}
             />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="char-engine">Engine</Label>
-            <select
-              id="char-engine"
-              value={engine}
-              onChange={(e) => setEngine(e.target.value as EngineType)}
-              disabled={isSubmitting}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {SUPPORTED_ENGINES.map((eng) => (
-                <option key={eng} value={eng}>
-                  {eng}
-                </option>
-              ))}
-            </select>
           </div>
 
           {error && (

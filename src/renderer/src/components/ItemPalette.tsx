@@ -6,7 +6,7 @@ import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import { Button } from './ui/button'
 import { GenerateDialog } from './GenerateDialog'
 import { SkinPickerModal } from './SkinPickerModal'
-import type { ItemCategory, AssetCategory, Character } from '../../../shared/types'
+import type { ItemCategory, AssetCategory, AssetListEntry, Character } from '../../../shared/types'
 
 // --- Types ---
 
@@ -104,25 +104,44 @@ function CharacterPlacementList(): JSX.Element {
 
   useEffect(() => { loadCharacters() }, [loadCharacters])
 
-  if (characters.length === 0) {
-    return (
-      <div className="text-sm text-muted-foreground text-center py-8">
-        <p>No characters yet.</p>
-        <p className="mt-1">Create one in the Characters tab.</p>
-      </div>
-    )
-  }
+  const handleQuickCreate = useCallback(async () => {
+    const existingNames = new Set(characters.map((c) => c.name))
+    let idx = 1
+    let name = ''
+    while (true) {
+      name = `new_${String(idx).padStart(2, '0')}`
+      if (!existingNames.has(name)) break
+      idx++
+    }
+    const assets = await window.api.invoke<AssetListEntry[]>(IPC_COMMANDS.ASSET_LIST)
+    const skins = (assets ?? []).filter((a) => a.category === 'skin')
+    const randomSkin = skins.length > 0 ? skins[Math.floor(Math.random() * skins.length)] : null
+    await window.api.invoke(IPC_COMMANDS.CHARACTER_CREATE, {
+      name,
+      ...(randomSkin ? { skin: randomSkin.relativePath } : {}),
+    })
+    await loadCharacters()
+  }, [characters, loadCharacters])
 
   return (
     <div className="space-y-1.5">
-      {characters.map((char: Character) => (
-        <CharacterPlacementCard
-          key={char.id}
-          character={char}
-          setDraggingManifestId={setDraggingManifestId}
-          onSkinChanged={loadCharacters}
-        />
-      ))}
+      <Button variant="outline" size="sm" className="w-full" onClick={handleQuickCreate}>
+        + New
+      </Button>
+      {characters.length === 0 ? (
+        <p className="text-xs text-muted-foreground text-center py-4">
+          No characters yet.
+        </p>
+      ) : (
+        characters.map((char: Character) => (
+          <CharacterPlacementCard
+            key={char.id}
+            character={char}
+            setDraggingManifestId={setDraggingManifestId}
+            onSkinChanged={loadCharacters}
+          />
+        ))
+      )}
     </div>
   )
 }

@@ -27,7 +27,7 @@ export interface Character {
   name: string
   soul: string // path to soul.md relative to ~/.agito/
   skin: string // path to skin image relative to ~/.agito/
-  engine: EngineType
+  engine: EngineType | null
   gridPosition: GridPosition | null
   currentSessionId: string | null
   sessionHistory: string[] // max 10, most recent first

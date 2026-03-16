@@ -34,7 +34,7 @@ interface RuntimeEntry {
 
 interface StartRuntimeSessionOptions {
   characterId: string
-  engine: EngineType
+  engine: EngineType | null
   sessionId: string
   workingDirectory: string
 }
@@ -43,13 +43,14 @@ interface RuntimeUpdateListener {
   (state: CharacterRuntimeState): void
 }
 
-function createParser(engine: EngineType): SemanticParser {
+function createParser(engine: EngineType | null): SemanticParser | null {
+  if (engine === null) return null
   return engine === 'claude-code'
     ? createClaudeSemanticParser()
     : createCodexSemanticParser()
 }
 
-function createEntry(characterId: string, engine: EngineType, sessionId: string | null): RuntimeEntry {
+function createEntry(characterId: string, engine: EngineType | null, sessionId: string | null): RuntimeEntry {
   return {
     state: buildInitialRuntimeState({
       characterId,
@@ -191,7 +192,7 @@ export class CharacterRuntimeService {
     this.updateState(entry)
   }
 
-  private getOrCreateEntry(characterId: string, engine: EngineType): RuntimeEntry {
+  private getOrCreateEntry(characterId: string, engine: EngineType | null): RuntimeEntry {
     const existing = this.entries.get(characterId)
     if (existing) return existing
 
@@ -200,7 +201,7 @@ export class CharacterRuntimeService {
     return entry
   }
 
-  private resetEntry(entry: RuntimeEntry, sessionId: string, engine: EngineType): void {
+  private resetEntry(entry: RuntimeEntry, sessionId: string, engine: EngineType | null): void {
     this.clearTimers(entry)
     this.detachTranscript(entry)
     entry.parser = createParser(engine)
@@ -215,11 +216,11 @@ export class CharacterRuntimeService {
 
   private syncTranscriptBinding(
     entry: RuntimeEntry,
-    engine: EngineType,
+    engine: EngineType | null,
     sessionId: string | null,
     sessionMapping?: SessionMapping
   ): void {
-    if (!sessionId || entry.transcriptPath || entry.transcriptPollTimer || !sessionMapping) {
+    if (!sessionId || entry.transcriptPath || entry.transcriptPollTimer || !sessionMapping || engine === null) {
       return
     }
 
@@ -239,7 +240,7 @@ export class CharacterRuntimeService {
   private rebindSession(
     entry: RuntimeEntry,
     sessionId: string | null,
-    engine: EngineType
+    engine: EngineType | null
   ): void {
     this.clearTimers(entry)
     this.detachTranscript(entry)
@@ -377,10 +378,11 @@ export class CharacterRuntimeService {
 
   private startTranscriptPolling(
     entry: RuntimeEntry,
-    engine: EngineType,
+    engine: EngineType | null,
     sessionId: string,
     workingDirectory: string
   ): void {
+    if (engine === null) return
     entry.transcriptPollTimer = setInterval(() => {
       const transcriptPath = this.resolveTranscriptPath(engine, sessionId, workingDirectory)
       if (!transcriptPath) return
@@ -393,10 +395,11 @@ export class CharacterRuntimeService {
   }
 
   private resolveTranscriptPath(
-    engine: EngineType,
+    engine: EngineType | null,
     sessionId: string,
     workingDirectory: string
   ): string | null {
+    if (engine === null) return null
     if (engine === 'claude-code') {
       const encodedDir = workingDirectory.replace(/\//g, '-')
       const directPath = join(this.homeDirectory, '.claude', 'projects', encodedDir, `${sessionId}.jsonl`)

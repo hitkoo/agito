@@ -17,7 +17,7 @@ import { electronTerminalTransport } from './terminal-transport'
 interface TerminalViewProps {
   characterId: string
   isActiveOwner: boolean
-  engine: EngineType
+  engine: EngineType | null
 }
 
 const CODEX_TRAILING_RESIZE_MS = 180
@@ -131,7 +131,7 @@ export function TerminalView({ characterId, isActiveOwner, engine }: TerminalVie
 
       void electronTerminalTransport.resize(characterId, measurement.cols, measurement.rows)
 
-      if (!shouldScheduleTrailingTerminalResize(engine)) return
+      if (!shouldScheduleTrailingTerminalResize(engine ?? 'claude-code')) return
       if (trailingResizeTimer !== null) {
         window.clearTimeout(trailingResizeTimer)
       }

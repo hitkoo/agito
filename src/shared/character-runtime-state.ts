@@ -11,7 +11,7 @@ export type CharacterMarkerStatus =
 
 export interface CharacterRuntimeState {
   characterId: string
-  engine: EngineType
+  engine: EngineType | null
   sessionId: string | null
   markerStatus: CharacterMarkerStatus
   expectedAlive: boolean
@@ -30,7 +30,7 @@ export interface CharacterRuntimeState {
 
 interface BuildInitialRuntimeStateOptions {
   characterId: string
-  engine: EngineType
+  engine: EngineType | null
   sessionId?: string | null
 }
 

@@ -1,9 +1,7 @@
 import { type ReactElement, useEffect, useState, useCallback } from 'react'
 import { useCharacterStore } from '../stores/character-store'
-import { useUIStore } from '../stores/ui-store'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
-import { SUPPORTED_ENGINES } from '../../../shared/constants'
-import type { Character, EngineType } from '../../../shared/types'
+import type { Character } from '../../../shared/types'
 import {
   Dialog,
   DialogContent,
@@ -15,7 +13,7 @@ import {
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
-import { CreateCharacterDialog } from './CreateCharacterDialog'
+import type { AssetListEntry } from '../../../shared/types'
 import { SkinPickerModal } from './SkinPickerModal'
 
 // ---------------------------------------------------------------------------
@@ -175,7 +173,7 @@ function CharacterListCard({
           <span className="font-semibold text-sm truncate">{character.name}</span>
         </div>
         <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="text-xs text-muted-foreground">{character.engine}</span>
+          <span className="text-xs text-muted-foreground">{character.engine ?? 'no engine'}</span>
           <span
             className={`h-2 w-2 shrink-0 rounded-full ${STATUS_COLORS[character.status] ?? STATUS_COLORS.idle}`}
             title={character.status}
@@ -261,7 +259,6 @@ function EditDetailPanel({
 
   // Local form state
   const [name, setName] = useState('')
-  const [engine, setEngine] = useState<EngineType>('claude-code')
   const [soulFiles, setSoulFiles] = useState<string[]>([])
   const [selectedSoulFile, setSelectedSoulFile] = useState('')
   const [spritePath, setSpritePath] = useState('')
@@ -277,7 +274,6 @@ function EditDetailPanel({
   useEffect(() => {
     if (!character) return
     setName(character.name)
-    setEngine(character.engine)
     setSpritePath(character.skin)
 
     setError(null)
@@ -300,7 +296,6 @@ function EditDetailPanel({
   const handleCancel = useCallback(() => {
     if (!character) return
     setName(character.name)
-    setEngine(character.engine)
     setSpritePath(character.skin)
     setError(null)
 
@@ -324,7 +319,6 @@ function EditDetailPanel({
       const soulPath = selectedSoulFile ? `souls/${selectedSoulFile}` : ''
       await window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, characterId, {
         name: trimmed,
-        engine,
         soul: soulPath,
         skin: spritePath,
       })
@@ -363,24 +357,6 @@ function EditDetailPanel({
             onChange={(e) => setName(e.target.value)}
             disabled={isSubmitting}
           />
-        </div>
-
-        {/* Engine */}
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="cp-edit-engine">Engine</Label>
-          <select
-            id="cp-edit-engine"
-            value={engine}
-            onChange={(e) => setEngine(e.target.value as EngineType)}
-            disabled={isSubmitting}
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {SUPPORTED_ENGINES.map((eng) => (
-              <option key={eng} value={eng}>
-                {eng}
-              </option>
-            ))}
-          </select>
         </div>
 
         {/* Soul File */}
@@ -479,8 +455,29 @@ export function CharactersPanel(): ReactElement {
   const characters = useCharacterStore((s) => s.characters)
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
 
-  const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  const handleQuickCreate = useCallback(async () => {
+    const existingNames = new Set(characters.map((c) => c.name))
+    let idx = 1
+    let name = ''
+    while (true) {
+      name = `new_${String(idx).padStart(2, '0')}`
+      if (!existingNames.has(name)) break
+      idx++
+    }
+    const assets = await window.api.invoke<AssetListEntry[]>(IPC_COMMANDS.ASSET_LIST)
+    const skins = (assets ?? []).filter((a) => a.category === 'skin')
+    const randomSkin = skins.length > 0 ? skins[Math.floor(Math.random() * skins.length)] : null
+    await window.api.invoke(IPC_COMMANDS.CHARACTER_CREATE, {
+      name,
+      ...(randomSkin ? { skin: randomSkin.relativePath } : {}),
+    })
+    await loadCharacters()
+    const updated = useCharacterStore.getState().characters
+    const newChar = updated.find((c) => c.name === name)
+    if (newChar) setSelectedId(newChar.id)
+  }, [characters, loadCharacters])
 
   // Refresh character list on mount
   useEffect(() => {
@@ -494,7 +491,7 @@ export function CharactersPanel(): ReactElement {
         {/* Header */}
         <div className="flex items-center justify-between p-3 border-b border-border">
           <h2 className="text-sm font-semibold">Characters</h2>
-          <Button variant="outline" size="sm" onClick={() => setShowCreateDialog(true)}>
+          <Button variant="outline" size="sm" onClick={handleQuickCreate}>
             + New
           </Button>
         </div>
@@ -531,10 +528,6 @@ export function CharactersPanel(): ReactElement {
         </div>
       )}
 
-      {/* Create dialog */}
-      {showCreateDialog && (
-        <CreateCharacterDialog onClose={() => setShowCreateDialog(false)} />
-      )}
     </div>
   )
 }
