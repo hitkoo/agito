@@ -68,7 +68,6 @@ import { Toaster } from 'sonner'
 
 export default function App(): JSX.Element {
   const activeTab = useUIStore((s) => s.activeTab)
-  const dockDetached = useUIStore((s) => s.terminalDock.detached)
   const setTheme = useUIStore((s) => s.setTheme)
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
   const loadRoom = useRoomStore((s) => s.loadFromMain)
@@ -169,7 +168,7 @@ export default function App(): JSX.Element {
           {activeTab === 'runtime' && <CharacterContextMenu />}
 
           {/* Terminal dock — overlay on canvas, visible in any tab */}
-          {!dockDetached && <TerminalDock />}
+          <TerminalDock />
 
           {activeTab === 'layout' && <LayoutContextMenu />}
         </div>

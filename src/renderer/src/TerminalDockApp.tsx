@@ -17,7 +17,6 @@ export function TerminalDockApp(): JSX.Element {
   const openTerminalDock = useUIStore((s) => s.openTerminalDock)
   const syncTerminalDock = useUIStore((s) => s.syncTerminalDock)
   const setTheme = useUIStore((s) => s.setTheme)
-  const dockDetached = useUIStore((s) => s.terminalDock.detached)
 
   useIPCSync()
   useTerminalDockSync()
@@ -34,8 +33,16 @@ export function TerminalDockApp(): JSX.Element {
       if (state.detached && state.activeCharacterId) {
         openTerminalDock(state.activeCharacterId)
       }
-      await window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_READY)
-      await loadCharacters()
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!cancelled) {
+            void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_READY)
+          }
+        })
+      })
+
+      void loadCharacters()
     })()
 
     return () => {
@@ -47,7 +54,7 @@ export function TerminalDockApp(): JSX.Element {
     <div className="flex flex-col h-full w-full bg-background text-foreground">
       <Toaster position="top-center" richColors theme="dark" />
       <div className="flex-1 relative overflow-hidden">
-        {dockDetached && <TerminalDock detachedMode />}
+        <TerminalDock detachedMode />
       </div>
     </div>
   )

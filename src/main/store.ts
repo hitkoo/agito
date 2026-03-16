@@ -26,7 +26,7 @@ export class AgitoStore {
   private basePath: string
 
   constructor() {
-    this.basePath = join(app.getPath('home'), AGITO_DIR_NAME)
+    this.basePath = process.env.AGITO_HOME || join(app.getPath('home'), AGITO_DIR_NAME)
   }
 
   initialize(): void {

@@ -5,6 +5,7 @@ import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import type { Character, ScannedSession } from '../../../shared/types'
 import {
   getTerminalDockRenderMode,
+  isTerminalDockOwner,
   shouldAutoResumeTerminal,
 } from '../../../shared/terminal-dock-state'
 import { TerminalView } from './TerminalView'
@@ -52,22 +53,29 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
 
   // Track which PTYs are actually alive
   const [alivePtys, setAlivePtys] = useState<Set<string>>(new Set())
+  const [checkedPtys, setCheckedPtys] = useState<Set<string>>(new Set())
   useEffect(() => {
     let cancelled = false
     async function check(): Promise<void> {
-      const alive = new Set<string>()
-      for (const c of assignedChars) {
-        const isAlive = await window.api.invoke<boolean>(IPC_COMMANDS.PTY_IS_ALIVE, c.id)
-        if (isAlive) alive.add(c.id)
+      const ids = Array.from(
+        new Set(
+          [...assignedChars.map((c) => c.id), dock.activeCharacterId].filter((id): id is string => Boolean(id))
+        )
+      )
+      const aliveIds = await window.api.invoke<string[]>(IPC_COMMANDS.PTY_GET_ALIVE_IDS, ids)
+      const alive = new Set(aliveIds)
+      if (!cancelled) {
+        setAlivePtys(alive)
+        setCheckedPtys(new Set(ids))
       }
-      if (!cancelled) setAlivePtys(alive)
     }
-    check()
+    void check()
     // Re-check when characters change (session started/stopped)
     return () => { cancelled = true }
-  }, [assignedChars.map((c) => `${c.id}:${c.currentSessionId}:${c.status}`).join()])
+  }, [assignedChars.map((c) => `${c.id}:${c.currentSessionId}:${c.status}`).join(), dock.activeCharacterId])
 
   const activeCharHasSession = assignedChars.some((c) => c.id === dock.activeCharacterId)
+  const activeCharAliveKnown = checkedPtys.has(dock.activeCharacterId ?? '')
   const activeCharPtyAlive = alivePtys.has(dock.activeCharacterId ?? '')
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
   const renderMode = getTerminalDockRenderMode({
@@ -75,6 +83,12 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
     detached: dock.detached,
     visible: dock.visible,
     minimized: dock.minimized,
+    ownerWindow: dock.ownerWindow,
+    detachedReady: dock.detachedReady,
+  })
+  const isActiveOwner = isTerminalDockOwner({
+    detachedMode,
+    ownerWindow: dock.ownerWindow,
   })
 
   // Only show tabs for characters with alive PTYs + the currently active character
@@ -87,7 +101,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
       renderMode,
       activeCharacterId: dock.activeCharacterId,
       hasAssignedSession: activeCharHasSession,
-      ptyAlive: activeCharPtyAlive,
+      ptyAlive: !activeCharAliveKnown ? true : activeCharPtyAlive,
       isResuming: resumingChars.has(dock.activeCharacterId ?? ''),
     })) return
 
@@ -133,7 +147,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
 
   // ESC to minimize
   useEffect(() => {
-    if (renderMode === 'hidden') return
+    if (renderMode === 'hidden' || renderMode === 'attached-dock-hidden-warm') return
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
       if (detachedMode) {
@@ -280,12 +294,17 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         ? 'flex flex-col h-full w-full bg-background overflow-hidden'
         : 'absolute z-[200] flex flex-col rounded-lg border border-border bg-background shadow-lg overflow-hidden'
       }
-      style={detachedMode ? {} : {
-        left: dock.position.x,
-        top: dock.position.y,
-        width: dock.size.width,
-        height: dock.size.height,
-        display: 'flex',
+      style={{
+        ...(detachedMode ? {} : {
+          left: dock.position.x,
+          top: dock.position.y,
+          width: dock.size.width,
+          height: dock.size.height,
+          display: 'flex',
+        }),
+        ...(renderMode === 'attached-dock-hidden-warm'
+          ? { opacity: 0, pointerEvents: 'none' as const }
+          : {}),
       }}
     >
       {/* Tab bar — JS drag in attach mode, native window drag in detach mode */}
@@ -369,9 +388,9 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         </div>
       </div>
 
-      {dock.activeCharacterId && activeCharPtyAlive && (
+      {dock.activeCharacterId && activeCharHasSession && activeCharPtyAlive && (
         <div className="flex-1 overflow-hidden min-h-0">
-          <TerminalView characterId={dock.activeCharacterId} isActiveOwner />
+          <TerminalView characterId={dock.activeCharacterId} isActiveOwner={isActiveOwner} />
         </div>
       )}
 
@@ -382,7 +401,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         </div>
       )}
 
-      {dock.activeCharacterId && !activeCharacter && (
+      {dock.activeCharacterId && !activeCharacter && !activeCharPtyAlive && (
         <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
           Loading terminal...
         </div>

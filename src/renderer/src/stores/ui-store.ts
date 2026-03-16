@@ -15,6 +15,8 @@ interface TerminalDockState {
   minimized: boolean
   detached: boolean
   activeCharacterId: string | null
+  ownerWindow: 'attached' | 'detached'
+  detachedReady: boolean
   position: { x: number; y: number }
   size: { width: number; height: number }
 }
@@ -104,6 +106,8 @@ export const useUIStore = create<UIStore>((set) => ({
     minimized: false,
     detached: false,
     activeCharacterId: null,
+    ownerWindow: 'attached',
+    detachedReady: false,
     position: { x: -1, y: -1 }, // -1 = auto-center on first open
     size: { width: 720, height: 520 },
   },
@@ -165,6 +169,8 @@ export const useUIStore = create<UIStore>((set) => ({
         detached: state.detached,
         minimized: state.minimized,
         activeCharacterId: state.activeCharacterId,
+        ownerWindow: state.ownerWindow,
+        detachedReady: state.detachedReady,
       },
     })),
 }))

@@ -72,6 +72,8 @@ app.whenReady().then(() => {
     detached: false,
     minimized: false,
     activeCharacterId: null,
+    ownerWindow: 'attached',
+    detachedReady: false,
   }
 
   const syncDockState = (targets = BrowserWindow.getAllWindows()): void => {
@@ -86,7 +88,14 @@ app.whenReady().then(() => {
   ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_READY, () => {
     if (detachedTerminalWindow && !detachedTerminalWindow.isDestroyed()) {
       detachedTerminalWindow.show()
+      detachedTerminalWindow.focus()
     }
+    dockSyncState = {
+      ...dockSyncState,
+      ownerWindow: 'detached',
+      detachedReady: true,
+    }
+    syncDockState()
   })
 
   ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_SET_ACTIVE_CHARACTER, (_, activeCharacterId: string | null) => {
@@ -102,13 +111,14 @@ app.whenReady().then(() => {
         detached: true,
         minimized: false,
         activeCharacterId: state.activeCharacterId ?? dockSyncState.activeCharacterId,
+        ownerWindow: 'attached',
+        detachedReady: false,
       }
       syncDockState([detachedTerminalWindow, ...BrowserWindow.getAllWindows().filter((win) => win !== detachedTerminalWindow)])
       detachedTerminalWindow.setAlwaysOnTop(false)
       if (wasMinimized) {
         detachedTerminalWindow.setSize(savedDockSize.width, savedDockSize.height)
       }
-      detachedTerminalWindow.focus()
       return
     }
 
@@ -119,6 +129,8 @@ app.whenReady().then(() => {
       detached: true,
       minimized: false,
       activeCharacterId: state.activeCharacterId ?? dockSyncState.activeCharacterId,
+      ownerWindow: 'attached',
+      detachedReady: false,
     }
     syncDockState(BrowserWindow.getAllWindows())
 
@@ -150,13 +162,27 @@ app.whenReady().then(() => {
 
     detachedTerminalWindow.on('closed', () => {
       detachedTerminalWindow = null
-      dockSyncState = { ...dockSyncState, detached: false, minimized: false }
+      dockSyncState = {
+        ...dockSyncState,
+        detached: false,
+        minimized: false,
+        ownerWindow: 'attached',
+        detachedReady: false,
+      }
       syncDockState()
     })
   })
 
   ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_ATTACH, () => {
     if (detachedTerminalWindow) {
+      dockSyncState = {
+        ...dockSyncState,
+        detached: false,
+        minimized: false,
+        ownerWindow: 'attached',
+        detachedReady: false,
+      }
+      syncDockState()
       detachedTerminalWindow.close()
     }
   })

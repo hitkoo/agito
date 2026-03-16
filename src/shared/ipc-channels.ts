@@ -13,8 +13,9 @@ export const IPC_COMMANDS = {
   PTY_WRITE: 'pty:write',
   PTY_RESIZE: 'pty:resize',
   PTY_KILL: 'pty:kill',
-  PTY_GET_BUFFER: 'pty:get-buffer',
   PTY_IS_ALIVE: 'pty:is-alive',
+  PTY_GET_ALIVE_IDS: 'pty:get-alive-ids',
+  TERMINAL_GET_SNAPSHOT: 'terminal:get-snapshot',
 
   // Store operations
   STORE_READ: 'store:read',

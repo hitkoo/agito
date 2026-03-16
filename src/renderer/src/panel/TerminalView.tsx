@@ -3,33 +3,45 @@ import type { ReactElement } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { IPC_EVENTS, IPC_COMMANDS } from '../../../shared/ipc-channels'
-import { shouldSendPtyResize } from '../../../shared/terminal-dock-state'
+import {
+  buildInitialTerminalReplay,
+  canHydrateTerminalViewport,
+  shouldSendPtyResize,
+  type TerminalReplayChunk,
+} from '../../../shared/terminal-dock-state'
+import { electronTerminalTransport } from './terminal-transport'
 
 interface TerminalViewProps {
   characterId: string
   isActiveOwner: boolean
 }
 
-interface TerminalBufferSnapshot {
-  buffer: string
-  version: number
-}
-
 export function TerminalView({ characterId, isActiveOwner }: TerminalViewProps): ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const ownerRef = useRef(isActiveOwner)
+  const loadingRef = useRef(true)
+  const syncViewportRef = useRef<(focusTerminal: boolean) => void>(() => {})
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!containerRef.current) return
+    ownerRef.current = isActiveOwner
+  }, [isActiveOwner])
 
-    // Read theme from CSS variables for dark/light consistency
+  useEffect(() => {
+    setLoading(true)
+    loadingRef.current = true
+  }, [characterId])
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
     const style = getComputedStyle(document.documentElement)
-    const hsl = (v: string, fallback: string): string => {
-      const val = style.getPropertyValue(v).trim()
-      return val ? `hsl(${val})` : fallback
+    const hsl = (variable: string, fallback: string): string => {
+      const value = style.getPropertyValue(variable).trim()
+      return value ? `hsl(${value})` : fallback
     }
 
     const terminal = new Terminal({
@@ -42,146 +54,220 @@ export function TerminalView({ characterId, isActiveOwner }: TerminalViewProps):
       fontFamily: 'monospace',
       fontSize: 13,
       cursorBlink: true,
+      scrollback: 5000,
     })
 
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
-    terminal.open(containerRef.current)
-    if (terminal.element) {
-      terminal.element.style.boxSizing = 'border-box'
-      terminal.element.style.paddingLeft = '16px'
-      terminal.element.style.paddingRight = '10px'
-      terminal.element.style.paddingTop = '4px'
-      terminal.element.style.paddingBottom = '4px'
-    }
 
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
     let disposed = false
+    let opened = false
+    let hydrating = false
     let hydrated = false
-    let snapshotVersion = 0
-    const queuedChunks: Array<{ data: string; version: number }> = []
+    let snapshotSeq = 0
+    let revealTimer: number | null = null
+    const queuedChunks: TerminalReplayChunk[] = []
 
-    const fitAndResize = (): boolean => {
-      const container = containerRef.current
-      const activeTerminal = terminalRef.current
-      const activeFitAddon = fitAddonRef.current
-      if (!container || !activeTerminal || !activeFitAddon) return false
+    const revealTerminal = (): void => {
+      if (disposed || !loadingRef.current) return
+      loadingRef.current = false
+      setLoading(false)
+    }
 
-      const rect = container.getBoundingClientRect()
-      if (rect.width <= 0 || rect.height <= 0) return false
-
-      activeFitAddon.fit()
-      const { cols, rows } = activeTerminal
-      if (!shouldSendPtyResize({
-        isActiveOwner,
-        width: rect.width,
-        height: rect.height,
-        cols,
-        rows,
-      })) {
-        return false
+    const ensureOpened = (): boolean => {
+      if (opened || !containerRef.current || !terminalRef.current) return opened
+      terminalRef.current.open(containerRef.current)
+      if (terminalRef.current.element) {
+        terminalRef.current.element.style.boxSizing = 'border-box'
+        terminalRef.current.element.style.paddingLeft = '16px'
+        terminalRef.current.element.style.paddingRight = '10px'
+        terminalRef.current.element.style.paddingTop = '4px'
+        terminalRef.current.element.style.paddingBottom = '4px'
       }
-
-      window.api.invoke(IPC_COMMANDS.PTY_RESIZE, { characterId, cols, rows })
+      opened = true
       return true
     }
 
-    const hydrateFromBuffer = async (): Promise<void> => {
-      if (disposed || hydrated) return
-      if (!fitAndResize()) return
+    const fitToContainer = (): { width: number; height: number; cols: number; rows: number } | null => {
+      if (!ensureOpened()) return null
 
-      hydrated = true
-      const snapshot = await window.api.invoke<TerminalBufferSnapshot>(IPC_COMMANDS.PTY_GET_BUFFER, characterId)
-      if (disposed || !terminalRef.current) return
-      snapshotVersion = snapshot.version
-      if (snapshot.buffer) {
-        terminalRef.current.write(snapshot.buffer)
-        terminalRef.current.scrollToBottom()
-      }
-      for (const chunk of queuedChunks) {
-        if (chunk.version > snapshotVersion) {
-          terminalRef.current.write(chunk.data)
-          snapshotVersion = chunk.version
-        }
-      }
-      queuedChunks.length = 0
-      if (isActiveOwner) {
-        terminalRef.current.focus()
-      }
-      if (!disposed) {
-        setLoading(false)
+      const activeContainer = containerRef.current
+      const activeTerminal = terminalRef.current
+      const activeFitAddon = fitAddonRef.current
+      if (!activeContainer || !activeTerminal || !activeFitAddon) return null
+
+      const rect = activeContainer.getBoundingClientRect()
+      if (!canHydrateTerminalViewport({ width: rect.width, height: rect.height })) return null
+
+      activeFitAddon.fit()
+      return {
+        width: rect.width,
+        height: rect.height,
+        cols: activeTerminal.cols,
+        rows: activeTerminal.rows,
       }
     }
 
+    const sendPtyResizeIfOwner = (measurement: { width: number; height: number; cols: number; rows: number }): void => {
+      if (!shouldSendPtyResize({
+        isActiveOwner: ownerRef.current,
+        width: measurement.width,
+        height: measurement.height,
+        cols: measurement.cols,
+        rows: measurement.rows,
+      })) {
+        return
+      }
+
+      void electronTerminalTransport.resize(characterId, measurement.cols, measurement.rows)
+    }
+
+    const flushQueuedReplay = (onDone: () => void): void => {
+      if (!terminalRef.current) {
+        onDone()
+        return
+      }
+
+      const pendingChunks = queuedChunks.filter((chunk) => chunk.seq > snapshotSeq)
+      queuedChunks.length = 0
+      if (pendingChunks.length === 0) {
+        onDone()
+        return
+      }
+
+      snapshotSeq = pendingChunks[pendingChunks.length - 1]?.seq ?? snapshotSeq
+      terminalRef.current.write(pendingChunks.map((chunk) => chunk.data).join(''), () => {
+        if (disposed) return
+        flushQueuedReplay(onDone)
+      })
+    }
+
+    const finalizeHydration = (focusTerminal: boolean): void => {
+      flushQueuedReplay(() => {
+        if (disposed) return
+
+        hydrated = true
+        hydrating = false
+        const measurement = fitToContainer()
+        if (measurement) {
+          sendPtyResizeIfOwner(measurement)
+        }
+        if (focusTerminal && ownerRef.current) {
+          terminalRef.current?.focus()
+        }
+        terminalRef.current?.scrollToBottom()
+        revealTerminal()
+      })
+    }
+
+    const syncViewport = async (focusTerminal: boolean): Promise<void> => {
+      if (disposed) return
+
+      const rect = containerRef.current?.getBoundingClientRect()
+      if (!rect || !canHydrateTerminalViewport({ width: rect.width, height: rect.height })) return
+
+      if (hydrated) {
+        const measurement = fitToContainer()
+        if (measurement) {
+          sendPtyResizeIfOwner(measurement)
+        }
+        if (focusTerminal && ownerRef.current) {
+          terminalRef.current?.focus()
+        }
+        return
+      }
+
+      if (hydrating) return
+      hydrating = true
+      ensureOpened()
+
+      const snapshot = await electronTerminalTransport.getSnapshot(characterId)
+      if (disposed || !terminalRef.current) return
+
+      if (snapshot.cols > 0 && snapshot.rows > 0) {
+        terminalRef.current.resize(snapshot.cols, snapshot.rows)
+      }
+
+      const initialReplay = buildInitialTerminalReplay(snapshot, queuedChunks)
+      snapshotSeq = initialReplay.seq
+      queuedChunks.length = 0
+
+      if (initialReplay.data) {
+        terminalRef.current.write(initialReplay.data, () => {
+          if (disposed) return
+          finalizeHydration(focusTerminal)
+        })
+        return
+      }
+
+      ensureOpened()
+      finalizeHydration(focusTerminal)
+      if (!snapshot.isAlive) {
+        revealTimer = window.setTimeout(() => {
+          revealTimer = null
+          revealTerminal()
+        }, 250)
+      }
+    }
+
+    syncViewportRef.current = (focusTerminal) => {
+      void syncViewport(focusTerminal)
+    }
+
     requestAnimationFrame(() => {
-      void hydrateFromBuffer()
+      syncViewportRef.current(false)
     })
 
-    // Forward user input to PTY
     const dataDisposable = terminal.onData((data) => {
-      window.api.invoke(IPC_COMMANDS.PTY_WRITE, { characterId, data })
+      if (!ownerRef.current) return
+      void electronTerminalTransport.write(characterId, data)
     })
 
-    // Subscribe to PTY output, filter by characterId
-    const unsubscribe = window.api.on(IPC_EVENTS.PTY_DATA, (...args: unknown[]) => {
-      const payload = args[0] as { characterId: string; data: string; version: number }
+    const unsubscribe = electronTerminalTransport.subscribeOutput((payload) => {
       if (payload.characterId !== characterId) return
 
       if (!hydrated) {
-        queuedChunks.push({ data: payload.data, version: payload.version })
+        queuedChunks.push({ data: payload.data, seq: payload.seq })
+        if (!hydrating) {
+          syncViewportRef.current(false)
+        }
         return
       }
 
-      if (payload.version <= snapshotVersion) return
-      if (terminalRef.current) {
-        terminalRef.current.write(payload.data)
-        snapshotVersion = payload.version
-      }
+      if (payload.seq <= snapshotSeq || !terminalRef.current) return
+      snapshotSeq = payload.seq
+      terminalRef.current.write(payload.data, revealTerminal)
     })
 
-    // ResizeObserver to fit terminal when container resizes
     const resizeObserver = new ResizeObserver(() => {
-      if (!hydrated) {
-        void hydrateFromBuffer()
-        return
-      }
-      fitAndResize()
+      syncViewportRef.current(false)
     })
-
-    resizeObserver.observe(containerRef.current)
+    resizeObserver.observe(container)
 
     return () => {
       disposed = true
+      if (revealTimer !== null) {
+        window.clearTimeout(revealTimer)
+      }
       dataDisposable.dispose()
       unsubscribe()
       resizeObserver.disconnect()
       terminal.dispose()
       terminalRef.current = null
       fitAddonRef.current = null
+      syncViewportRef.current = () => {}
     }
-  }, [characterId, isActiveOwner])
+  }, [characterId])
 
   useEffect(() => {
-    if (isActiveOwner && fitAddonRef.current && terminalRef.current && containerRef.current) {
-      requestAnimationFrame(() => {
-        const t = terminalRef.current
-        const rect = containerRef.current?.getBoundingClientRect()
-        if (!t || !rect) return
-        fitAddonRef.current?.fit()
-        t.focus()
-        if (shouldSendPtyResize({
-          isActiveOwner,
-          width: rect.width,
-          height: rect.height,
-          cols: t.cols,
-          rows: t.rows,
-        })) {
-          window.api.invoke(IPC_COMMANDS.PTY_RESIZE, { characterId, cols: t.cols, rows: t.rows })
-        }
-      })
-    }
+    if (!isActiveOwner) return
+
+    requestAnimationFrame(() => {
+      syncViewportRef.current(true)
+    })
   }, [characterId, isActiveOwner])
 
   return (

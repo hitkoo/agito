@@ -112,6 +112,8 @@ export interface TerminalDockSyncState {
   detached: boolean
   minimized: boolean
   activeCharacterId: string | null
+  ownerWindow: 'attached' | 'detached'
+  detachedReady: boolean
 }
 
 // --- Asset Management ---

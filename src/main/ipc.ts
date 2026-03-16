@@ -5,7 +5,7 @@ import { homedir } from 'os'
 import { IPC_COMMANDS, IPC_EVENTS } from '../shared/ipc-channels'
 import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, AssetGenerateRequest, AssetGenerateResult, ScannedSession } from '../shared/types'
 import type { AgitoStore } from './store'
-import { PtyPool } from './pty-pool'
+import { TerminalSessionService } from './terminal-session-service'
 import { StatusDetector } from './status-detector'
 import { GRID_COLS, GRID_ROWS, FOOTPRINTS, MAX_SESSION_HISTORY, ASSETS_DIR } from '../shared/constants'
 import type { EngineAdapter } from './engine/types'
@@ -14,21 +14,21 @@ import { codexAdapter } from './engine/codex'
 
 // 16ms PTY output batching (~60fps) to prevent xterm.js write() flooding
 const PTY_BATCH_MS = 16
-const pendingPtyData = new Map<string, { chunks: string[]; version: number }>()
+const pendingPtyData = new Map<string, { chunks: string[]; seq: number }>()
 const ptyFlushTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function batchPtyData(
   characterId: string,
   data: string,
-  version: number,
+  seq: number,
   broadcast: (event: string, payload: unknown) => void
 ): void {
   if (!pendingPtyData.has(characterId)) {
-    pendingPtyData.set(characterId, { chunks: [], version })
+    pendingPtyData.set(characterId, { chunks: [], seq })
   }
   const pending = pendingPtyData.get(characterId)!
   pending.chunks.push(data)
-  pending.version = version
+  pending.seq = seq
 
   if (!ptyFlushTimers.has(characterId)) {
     ptyFlushTimers.set(characterId, setTimeout(() => {
@@ -37,7 +37,7 @@ function batchPtyData(
       broadcast(IPC_EVENTS.PTY_DATA, {
         characterId,
         data: merged,
-        version: pendingEntry?.version ?? version,
+        seq: pendingEntry?.seq ?? seq,
       })
       pendingPtyData.delete(characterId)
       ptyFlushTimers.delete(characterId)
@@ -55,15 +55,50 @@ function flushPtyData(characterId: string, broadcast: (event: string, payload: u
     broadcast(IPC_EVENTS.PTY_DATA, {
       characterId,
       data: pendingEntry.chunks.join(''),
-      version: pendingEntry.version,
+      seq: pendingEntry.seq,
     })
   }
   pendingPtyData.delete(characterId)
 }
 
 export function registerIPCHandlers(store: AgitoStore): void {
-  const ptyPool = new PtyPool()
+  const terminalSessions = new TerminalSessionService()
   const statusDetector = new StatusDetector()
+  app.once('before-quit', () => {
+    terminalSessions.killAll()
+  })
+
+  const attachStatusListener = (characterId: string): void => {
+    statusDetector.attach(characterId, (status) => {
+      broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, { characterId, status })
+    })
+  }
+
+  const spawnManagedSession = (
+    characterId: string,
+    command: string,
+    args: string[],
+    cwd: string,
+    disconnectedStatus: Character['status']
+  ): void => {
+    statusDetector.detach(characterId)
+    terminalSessions.spawn(characterId, command, args, cwd, {
+      onData: (data, seq) => {
+        batchPtyData(characterId, data, seq, broadcastToAll)
+        statusDetector.feedData(characterId, data)
+      },
+      onExit: ({ exitCode }) => {
+        flushPtyData(characterId, broadcastToAll)
+        statusDetector.detach(characterId)
+        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
+          characterId,
+          status: exitCode === 0 ? disconnectedStatus : 'error',
+        })
+      },
+    })
+
+    attachStatusListener(characterId)
+  }
 
   // --- Store operations ---
 
@@ -90,48 +125,34 @@ export function registerIPCHandlers(store: AgitoStore): void {
   ipcMain.handle(
     IPC_COMMANDS.PTY_SPAWN,
     (_, characterId: string, args: { command: string; args: string[]; cwd: string }) => {
-      const pty = ptyPool.spawn(characterId, args.command, args.args, args.cwd)
-
-      pty.onData((data) => {
-        batchPtyData(characterId, data, ptyPool.getOutputVersion(characterId), broadcastToAll)
-        statusDetector.feedData(characterId, data)
-      })
-
-      statusDetector.attach(characterId, (status) => {
-        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, { characterId, status })
-      })
-
-      pty.onExit(() => {
-        flushPtyData(characterId, broadcastToAll)
-        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
-          characterId,
-          status: 'disconnected',
-        })
-      })
-
+      spawnManagedSession(characterId, args.command, args.args, args.cwd, 'idle')
       return { success: true }
     }
   )
 
   ipcMain.handle(IPC_COMMANDS.PTY_WRITE, (_, args: { characterId: string; data: string }) => {
-    ptyPool.write(args.characterId, args.data)
+    terminalSessions.write(args.characterId, args.data)
   })
 
   ipcMain.handle(IPC_COMMANDS.PTY_RESIZE, (_, args: { characterId: string; cols: number; rows: number }) => {
-    ptyPool.resize(args.characterId, args.cols, args.rows)
+    terminalSessions.resize(args.characterId, args.cols, args.rows)
   })
 
   ipcMain.handle(IPC_COMMANDS.PTY_KILL, (_, characterId: string) => {
     statusDetector.detach(characterId)
-    ptyPool.kill(characterId)
+    terminalSessions.kill(characterId)
   })
 
   ipcMain.handle(IPC_COMMANDS.PTY_IS_ALIVE, (_, characterId: string) => {
-    return ptyPool.isAlive(characterId)
+    return terminalSessions.isAlive(characterId)
   })
 
-  ipcMain.handle(IPC_COMMANDS.PTY_GET_BUFFER, (_, characterId: string) => {
-    return ptyPool.getOutputSnapshot(characterId)
+  ipcMain.handle(IPC_COMMANDS.PTY_GET_ALIVE_IDS, (_, characterIds: string[]) => {
+    return terminalSessions.getAliveIds(characterIds)
+  })
+
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_GET_SNAPSHOT, async (_, characterId: string) => {
+    return terminalSessions.getSnapshot(characterId)
   })
 
   // --- Character CRUD ---
@@ -214,26 +235,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       }
 
       const spawnArgs = adapter.buildSpawnArgs({ soulPath: soulContent, workingDirectory })
-
-      const pty = ptyPool.spawn(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
-
-      pty.onData((data) => {
-        batchPtyData(characterId, data, ptyPool.getOutputVersion(characterId), broadcastToAll)
-        statusDetector.feedData(characterId, data)
-      })
-
-      statusDetector.attach(characterId, (status) => {
-        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, { characterId, status })
-      })
-
-      pty.onExit(({ exitCode }) => {
-        flushPtyData(characterId, broadcastToAll)
-        statusDetector.detach(characterId)
-        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
-          characterId,
-          status: exitCode === 0 ? 'done' : 'error',
-        })
-      })
+      spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory, 'done')
 
       const sessionId = nanoid()
       const now = new Date().toISOString()
@@ -299,26 +301,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       }
 
       const spawnArgs = adapter.buildSpawnArgs({ sessionId, soulPath: soulContent, workingDirectory })
-
-      const pty = ptyPool.spawn(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
-
-      pty.onData((data) => {
-        batchPtyData(characterId, data, ptyPool.getOutputVersion(characterId), broadcastToAll)
-        statusDetector.feedData(characterId, data)
-      })
-
-      statusDetector.attach(characterId, (status) => {
-        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, { characterId, status })
-      })
-
-      pty.onExit(({ exitCode }) => {
-        flushPtyData(characterId, broadcastToAll)
-        statusDetector.detach(characterId)
-        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
-          characterId,
-          status: exitCode === 0 ? 'done' : 'error',
-        })
-      })
+      spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory, 'done')
 
       const now = new Date().toISOString()
       const sessions = store.getSessions()
@@ -356,7 +339,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
     const { characterId } = args
 
     statusDetector.detach(characterId)
-    ptyPool.kill(characterId)
+    terminalSessions.kill(characterId)
 
     const characters = store.getCharacters()
     const updatedCharacters = characters.map((c) =>
