@@ -129,7 +129,7 @@ const STATUS_COLORS: Record<string, string> = {
   need_input: 'bg-yellow-400',
   need_approval: 'bg-orange-400',
   done: 'bg-green-500',
-  error_disconnected: 'bg-red-500',
+  error: 'bg-red-500',
 }
 
 // ---------------------------------------------------------------------------

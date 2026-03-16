@@ -69,6 +69,50 @@ describe('createClaudeSemanticParser', () => {
     })
   })
 
+  test('clears active tool on real Claude tool_result payload shape', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_real',
+              name: 'Bash',
+              input: { command: 'pwd' },
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_real',
+              content: [{ type: 'text', text: 'ok' }],
+            },
+          ],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      activeToolName: null,
+      activeToolKind: null,
+    })
+  })
+
   test('classifies question-style turn completions as need_input instead of done', () => {
     const parser = createClaudeSemanticParser()
 
@@ -87,6 +131,38 @@ describe('createClaudeSemanticParser', () => {
       unreadDone: false,
       needsInput: true,
       lastAssistantPreview: 'Which directory should I use next?',
+    })
+  })
+
+  test('treats errors as transient and clears them on later semantic activity', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        error: 'invalid_request',
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      lastError: 'invalid_request',
+    })
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'Finished cleanly.' }],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      lastError: null,
+      unreadDone: true,
+      needsInput: false,
     })
   })
 })
@@ -153,7 +229,7 @@ describe('createCodexSemanticParser', () => {
         type: 'event_msg',
         payload: {
           type: 'agent_message',
-          text: 'Should I proceed with the migration?',
+          message: 'Should I proceed with the migration?',
         },
       })
     )
@@ -169,6 +245,57 @@ describe('createCodexSemanticParser', () => {
       unreadDone: false,
       needsInput: true,
       lastAssistantPreview: 'Should I proceed with the migration?',
+    })
+  })
+
+  test('accepts real Codex agent_message payloads that use message instead of text', () => {
+    const parser = createCodexSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'agent_message',
+          message: 'Implementing the requested refactor now.',
+          phase: 'commentary',
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      lastAssistantPreview: 'Implementing the requested refactor now.',
+    })
+  })
+
+  test('clears aborted errors on subsequent semantic events', () => {
+    const parser = createCodexSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'turn_aborted',
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      lastError: 'turn_aborted',
+    })
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'task_started',
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      lastError: null,
+      isRunning: true,
     })
   })
 })

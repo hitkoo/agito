@@ -91,7 +91,7 @@ describe('deriveCharacterMarkerStatus', () => {
     ).toBe('idle')
   })
 
-  test('uses error_disconnected when a bound session dies unexpectedly', () => {
+  test('does not derive error from PTY flags alone', () => {
     expect(
       deriveCharacterMarkerStatus({
         ...buildInitialRuntimeState({
@@ -101,9 +101,21 @@ describe('deriveCharacterMarkerStatus', () => {
         }),
         expectedAlive: true,
         ptyAlive: false,
-        lastError: 'pty exited unexpectedly',
       })
-    ).toBe('error_disconnected')
+    ).toBe('idle')
+  })
+
+  test('uses explicit runtime errors for error', () => {
+    expect(
+      deriveCharacterMarkerStatus({
+        ...buildInitialRuntimeState({
+          characterId: 'char-1',
+          engine: 'claude-code',
+          sessionId: 'session-1',
+        }),
+        lastError: 'turn_aborted',
+      })
+    ).toBe('error')
   })
 })
 

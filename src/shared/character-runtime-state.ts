@@ -7,7 +7,7 @@ export type CharacterMarkerStatus =
   | 'need_input'
   | 'need_approval'
   | 'done'
-  | 'error_disconnected'
+  | 'error'
 
 export interface CharacterRuntimeState {
   characterId: string
@@ -43,6 +43,8 @@ const INPUT_REQUEST_PATTERNS = [
   /\bplease choose\b/iu,
   /\blet me know\b/iu,
   /\bshould i\b/iu,
+  /\bwaiting for your\b/iu,
+  /\bconfirmation\b/iu,
 ]
 
 export function buildInitialRuntimeState(
@@ -83,21 +85,12 @@ export function classifyAssistantPreview(
 export function deriveCharacterMarkerStatus(
   state: CharacterRuntimeState
 ): CharacterMarkerStatus {
-  if (
-    state.sessionId !== null &&
-    state.expectedAlive &&
-    !state.ptyAlive &&
-    state.lastError
-  ) {
-    return 'error_disconnected'
-  }
-
   if (state.sessionId === null) return 'no_session'
+  if (state.lastError) return 'error'
   if (state.needsApproval) return 'need_approval'
   if (state.needsInput) return 'need_input'
   if (state.isRunning) return 'running'
   if (state.unreadDone) return 'done'
-  if (state.expectedAlive && !state.ptyAlive) return 'error_disconnected'
   return 'idle'
 }
 

@@ -22,7 +22,7 @@ const STATUS_DOT_COLORS: Record<string, string> = {
   need_input: '#ffd93d',
   need_approval: '#ffb347',
   done: '#51cf66',
-  error_disconnected: '#ff6b6b',
+  error: '#ff6b6b',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -32,7 +32,7 @@ const STATUS_LABELS: Record<string, string> = {
   need_input: 'need input',
   need_approval: 'need approval',
   done: 'done',
-  error_disconnected: 'offline',
+  error: 'error',
 }
 
 // ---------------------------------------------------------------------------
@@ -46,6 +46,8 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
   const setDockActiveCharacter = useUIStore((s) => s.setDockActiveCharacter)
   const setDockPosition = useUIStore((s) => s.setDockPosition)
   const setDockSize = useUIStore((s) => s.setDockSize)
+  const refreshKeys = useUIStore((s) => s.terminalRefreshKey)
+  const bumpTerminalRefreshKey = useUIStore((s) => s.bumpTerminalRefreshKey)
   const characters = useCharacterStore((s) => s.characters)
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -252,6 +254,20 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
     }
     handleTabSelect(charId)
   }, [tabContextMenu, characters, loadCharacters, handleTabSelect])
+
+  const handleTabRefreshSession = useCallback(async () => {
+    if (!tabContextMenu) return
+    const charId = tabContextMenu.characterId
+    setTabContextMenu(null)
+    const char = characters.find((c) => c.id === charId)
+    if (!char?.currentSessionId) return
+    await window.api.invoke(IPC_COMMANDS.SESSION_RESUME, {
+      characterId: charId,
+      sessionId: char.currentSessionId,
+    })
+    await loadCharacters()
+    bumpTerminalRefreshKey(charId)
+  }, [tabContextMenu, characters, loadCharacters, bumpTerminalRefreshKey])
 
   const handleTabUnassignSession = useCallback(async () => {
     if (!tabContextMenu) return
@@ -488,7 +504,11 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
 
       {dock.activeCharacterId && activeCharHasSession && activeCharPtyAlive && (
         <div className="flex-1 overflow-hidden min-h-0">
-          <TerminalView characterId={dock.activeCharacterId} isActiveOwner={isActiveOwner} />
+          <TerminalView
+            key={`${dock.activeCharacterId}-${refreshKeys[dock.activeCharacterId] ?? 0}`}
+            characterId={dock.activeCharacterId}
+            isActiveOwner={isActiveOwner}
+          />
         </div>
       )}
 
@@ -551,6 +571,10 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
             </button>
           ) : (
             <>
+              <button className={menuItemClass} onClick={handleTabRefreshSession}>
+                Refresh Session
+              </button>
+              <div className="my-1 h-px bg-border" />
               <button className={menuItemClass} onClick={handleTabAssignSession}>
                 Assign Other Session
               </button>

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync, watchFile, unwatchFile } from 'fs'
+import { existsSync, readFileSync, readdirSync, watchFile, unwatchFile } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import {
@@ -8,31 +8,14 @@ import {
   shouldScheduleDoneAutoClear,
   type CharacterRuntimeState,
 } from '../shared/character-runtime-state'
-import type { Character, EngineType } from '../shared/types'
+import type { Character, EngineType, SessionMapping } from '../shared/types'
 import {
   createClaudeSemanticParser,
   createCodexSemanticParser,
 } from './engine-status-parser'
 
-const IDLE_FALLBACK_MS = 2000
 const DONE_AUTO_CLEAR_MS = 2000
 const TRANSCRIPT_POLL_MS = 500
-
-const APPROVAL_PATTERNS = [
-  /\bapproval\b/iu,
-  /\bapprove\b/iu,
-  /\bpermission\b/iu,
-  /\bconfirm\b/iu,
-]
-
-const INPUT_PATTERNS = [
-  /\bpress enter\b/iu,
-  /\bwhich\b/iu,
-  /\bwhat should\b/iu,
-  /\bhow should\b/iu,
-  /\blet me know\b/iu,
-  /\?\s*$/u,
-]
 
 interface SemanticParser {
   ingestLine(line: string): void
@@ -44,12 +27,9 @@ interface RuntimeEntry {
   parser: SemanticParser | null
   transcriptPath: string | null
   transcriptPollTimer: ReturnType<typeof setInterval> | null
-  idleTimer: ReturnType<typeof setTimeout> | null
   doneTimer: ReturnType<typeof setTimeout> | null
   fileOffset: number
   lineBuffer: string
-  heuristicNeedsApproval: boolean
-  heuristicNeedsInput: boolean
 }
 
 interface StartRuntimeSessionOptions {
@@ -79,41 +59,61 @@ function createEntry(characterId: string, engine: EngineType, sessionId: string 
     parser: sessionId ? createParser(engine) : null,
     transcriptPath: null,
     transcriptPollTimer: null,
-    idleTimer: null,
     doneTimer: null,
     fileOffset: 0,
     lineBuffer: '',
-    heuristicNeedsApproval: false,
-    heuristicNeedsInput: false,
   }
 }
 
 export class CharacterRuntimeService {
   private readonly entries = new Map<string, RuntimeEntry>()
   private readonly listeners = new Set<RuntimeUpdateListener>()
+  private readonly homeDirectory: string
+
+  constructor(options?: { homeDirectory?: string }) {
+    this.homeDirectory = options?.homeDirectory ?? homedir()
+  }
 
   onUpdate(listener: RuntimeUpdateListener): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
   }
 
-  syncCharacters(characters: Character[]): void {
+  syncCharacters(characters: Character[], sessions: SessionMapping[] = []): void {
     const ids = new Set(characters.map((character) => character.id))
+    const sessionsById = new Map(sessions.map((session) => [session.sessionId, session]))
 
     for (const character of characters) {
       const existing = this.entries.get(character.id)
       if (!existing) {
-        this.entries.set(
-          character.id,
-          createEntry(character.id, character.engine, character.currentSessionId)
+        const entry = createEntry(character.id, character.engine, character.currentSessionId)
+        this.entries.set(character.id, entry)
+        this.syncTranscriptBinding(
+          entry,
+          character.engine,
+          character.currentSessionId,
+          sessionsById.get(character.currentSessionId ?? '')
         )
       } else {
         existing.state.engine = character.engine
         if (character.currentSessionId === null && existing.state.sessionId !== null) {
           this.stopSession(character.id)
-        } else if (character.currentSessionId !== null && existing.state.sessionId === null) {
-          existing.state.sessionId = character.currentSessionId
+        } else if (character.currentSessionId !== existing.state.sessionId) {
+          this.rebindSession(existing, character.currentSessionId, character.engine)
+          this.syncTranscriptBinding(
+            existing,
+            character.engine,
+            character.currentSessionId,
+            sessionsById.get(character.currentSessionId ?? '')
+          )
           this.updateState(existing)
+        } else {
+          this.syncTranscriptBinding(
+            existing,
+            character.engine,
+            character.currentSessionId,
+            sessionsById.get(character.currentSessionId ?? '')
+          )
         }
       }
     }
@@ -136,12 +136,6 @@ export class CharacterRuntimeService {
   startSession(options: StartRuntimeSessionOptions): void {
     const entry = this.getOrCreateEntry(options.characterId, options.engine)
     this.resetEntry(entry, options.sessionId, options.engine)
-
-    entry.state.sessionId = options.sessionId
-    entry.state.expectedAlive = true
-    entry.state.ptyAlive = true
-    entry.state.isRunning = true
-    entry.state.markerStatus = deriveCharacterMarkerStatus(entry.state)
 
     const transcriptPath = this.resolveTranscriptPath(
       options.engine,
@@ -171,66 +165,6 @@ export class CharacterRuntimeService {
     this.emit(entry.state)
   }
 
-  handlePtyData(characterId: string, data: string): void {
-    const entry = this.entries.get(characterId)
-    if (!entry) return
-
-    entry.state.expectedAlive = entry.state.sessionId !== null
-    entry.state.ptyAlive = true
-
-    const approvalDetected = APPROVAL_PATTERNS.some((pattern) => pattern.test(data))
-    const inputDetected = !approvalDetected && INPUT_PATTERNS.some((pattern) => pattern.test(data))
-
-    if (approvalDetected) {
-      entry.heuristicNeedsApproval = true
-      entry.heuristicNeedsInput = false
-      entry.state.isRunning = false
-      this.clearIdleTimer(entry)
-    } else if (inputDetected) {
-      entry.heuristicNeedsInput = true
-      entry.heuristicNeedsApproval = false
-      entry.state.isRunning = false
-      this.clearIdleTimer(entry)
-    } else if (!entry.state.needsApproval && !entry.state.needsInput) {
-      entry.state.isRunning = true
-      entry.state.unreadDone = false
-      this.scheduleIdleFallback(entry)
-    }
-
-    this.syncFromParser(entry)
-  }
-
-  handleUserInput(characterId: string): void {
-    const entry = this.entries.get(characterId)
-    if (!entry) return
-
-    entry.heuristicNeedsApproval = false
-    entry.heuristicNeedsInput = false
-    entry.state.needsApproval = false
-    entry.state.needsInput = false
-    entry.state.unreadDone = false
-    entry.state.isRunning = entry.state.sessionId !== null
-    entry.state.lastError = null
-    this.scheduleIdleFallback(entry)
-    this.updateState(entry)
-  }
-
-  handlePtyExit(characterId: string, exitCode: number): void {
-    const entry = this.entries.get(characterId)
-    if (!entry) return
-
-    this.clearIdleTimer(entry)
-    entry.state.ptyAlive = false
-    entry.state.isRunning = false
-    if (entry.state.sessionId !== null) {
-      entry.state.expectedAlive = true
-      entry.state.lastError = exitCode === 0 ? 'disconnected' : `exit ${exitCode}`
-    } else {
-      entry.state.expectedAlive = false
-    }
-    this.updateState(entry)
-  }
-
   setAttention(characterId: string, attentionActive: boolean): void {
     const entry = this.entries.get(characterId)
     if (!entry) return
@@ -247,6 +181,10 @@ export class CharacterRuntimeService {
     ) {
       entry.state.unreadDone = false
       entry.state.lastTurnEndedAt = null
+    }
+
+    if (entry.state.lastError && !wasAttentionActive && attentionActive) {
+      entry.state.lastError = null
     }
 
     this.syncDoneAutoClear(entry)
@@ -273,8 +211,46 @@ export class CharacterRuntimeService {
     })
     entry.fileOffset = 0
     entry.lineBuffer = ''
-    entry.heuristicNeedsApproval = false
-    entry.heuristicNeedsInput = false
+  }
+
+  private syncTranscriptBinding(
+    entry: RuntimeEntry,
+    engine: EngineType,
+    sessionId: string | null,
+    sessionMapping?: SessionMapping
+  ): void {
+    if (!sessionId || entry.transcriptPath || entry.transcriptPollTimer || !sessionMapping) {
+      return
+    }
+
+    const transcriptPath = this.resolveTranscriptPath(
+      engine,
+      sessionId,
+      sessionMapping.workingDirectory
+    )
+    if (transcriptPath) {
+      this.attachTranscript(entry, transcriptPath)
+      return
+    }
+
+    this.startTranscriptPolling(entry, engine, sessionId, sessionMapping.workingDirectory)
+  }
+
+  private rebindSession(
+    entry: RuntimeEntry,
+    sessionId: string | null,
+    engine: EngineType
+  ): void {
+    this.clearTimers(entry)
+    this.detachTranscript(entry)
+    entry.parser = sessionId ? createParser(engine) : null
+    entry.state = buildInitialRuntimeState({
+      characterId: entry.state.characterId,
+      engine,
+      sessionId,
+    })
+    entry.fileOffset = 0
+    entry.lineBuffer = ''
   }
 
   private updateState(entry: RuntimeEntry): void {
@@ -301,9 +277,9 @@ export class CharacterRuntimeService {
     entry.state.activeToolKind = parserState.activeToolKind
     entry.state.lastAssistantPreview = parserState.lastAssistantPreview
     entry.state.lastTurnEndedAt = parserState.lastTurnEndedAt
-    entry.state.lastError = parserState.lastError ?? entry.state.lastError
-    entry.state.needsApproval = entry.heuristicNeedsApproval
-    entry.state.needsInput = entry.heuristicNeedsInput || parserState.needsInput
+    entry.state.lastError = parserState.lastError
+    entry.state.needsApproval = parserState.needsApproval
+    entry.state.needsInput = parserState.needsInput
     entry.state.unreadDone =
       !entry.state.needsApproval &&
       !entry.state.needsInput &&
@@ -314,17 +290,19 @@ export class CharacterRuntimeService {
   }
 
   private syncDoneAutoClear(entry: RuntimeEntry): void {
+    const hasTransientState = entry.state.unreadDone || Boolean(entry.state.lastError)
     if (
       shouldScheduleDoneAutoClear({
-        unreadDone: entry.state.unreadDone,
+        unreadDone: hasTransientState,
         isAttentionActive: entry.state.attentionActive,
       })
     ) {
       if (entry.doneTimer) return
       entry.doneTimer = setTimeout(() => {
         entry.doneTimer = null
-        if (!entry.state.unreadDone || !entry.state.attentionActive) return
+        if ((!entry.state.unreadDone && !entry.state.lastError) || !entry.state.attentionActive) return
         entry.state.unreadDone = false
+        entry.state.lastError = null
         entry.state.lastTurnEndedAt = null
         this.updateState(entry)
       }, DONE_AUTO_CLEAR_MS)
@@ -337,25 +315,7 @@ export class CharacterRuntimeService {
     }
   }
 
-  private scheduleIdleFallback(entry: RuntimeEntry): void {
-    this.clearIdleTimer(entry)
-    entry.idleTimer = setTimeout(() => {
-      entry.idleTimer = null
-      if (entry.state.needsApproval || entry.state.needsInput || entry.state.unreadDone) return
-      entry.state.isRunning = false
-      this.updateState(entry)
-    }, IDLE_FALLBACK_MS)
-  }
-
-  private clearIdleTimer(entry: RuntimeEntry): void {
-    if (entry.idleTimer) {
-      clearTimeout(entry.idleTimer)
-      entry.idleTimer = null
-    }
-  }
-
   private clearTimers(entry: RuntimeEntry): void {
-    this.clearIdleTimer(entry)
     if (entry.doneTimer) {
       clearTimeout(entry.doneTimer)
       entry.doneTimer = null
@@ -407,7 +367,7 @@ export class CharacterRuntimeService {
       }
       this.syncFromParser(entry)
     } catch {
-      // keep fallback PTY-driven status
+      // ignore transcript read errors and keep the last semantic state
     }
   }
 
@@ -435,10 +395,10 @@ export class CharacterRuntimeService {
   ): string | null {
     if (engine === 'claude-code') {
       const encodedDir = workingDirectory.replace(/\//g, '-')
-      const directPath = join(homedir(), '.claude', 'projects', encodedDir, `${sessionId}.jsonl`)
+      const directPath = join(this.homeDirectory, '.claude', 'projects', encodedDir, `${sessionId}.jsonl`)
       if (existsSync(directPath)) return directPath
 
-      const projectRoot = join(homedir(), '.claude', 'projects')
+      const projectRoot = join(this.homeDirectory, '.claude', 'projects')
       if (!existsSync(projectRoot)) return null
       for (const entry of readdirSync(projectRoot, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue
@@ -448,19 +408,44 @@ export class CharacterRuntimeService {
       return null
     }
 
+    return this.findCodexTranscriptPath(sessionId)
+  }
+
+  private findCodexTranscriptPath(sessionId: string): string | null {
     const codexRoots = [
-      join(homedir(), '.codex', 'sessions'),
-      join(homedir(), '.codex', 'archived_sessions'),
+      join(this.homeDirectory, '.codex', 'sessions'),
+      join(this.homeDirectory, '.codex', 'archived_sessions'),
     ]
+
     for (const root of codexRoots) {
-      if (!existsSync(root)) continue
-      for (const entry of readdirSync(root, { withFileTypes: true })) {
-        if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
-        if (entry.name.includes(sessionId)) {
-          return join(root, entry.name)
+      const match = this.findTranscriptPathRecursive(root, sessionId)
+      if (match) return match
+    }
+
+    return null
+  }
+
+  private findTranscriptPathRecursive(root: string, sessionId: string): string | null {
+    if (!existsSync(root)) return null
+
+    const stack = [root]
+    while (stack.length > 0) {
+      const current = stack.pop()
+      if (!current) continue
+
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        const nextPath = join(current, entry.name)
+        if (entry.isDirectory()) {
+          stack.push(nextPath)
+          continue
+        }
+
+        if (entry.isFile() && entry.name.endsWith('.jsonl') && entry.name.includes(sessionId)) {
+          return nextPath
         }
       }
     }
+
     return null
   }
 

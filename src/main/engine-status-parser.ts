@@ -32,6 +32,7 @@ interface CodexRecord {
   payload?: {
     type?: string
     text?: string
+    message?: string
     name?: string
     call_id?: string
   }
@@ -40,6 +41,7 @@ interface CodexRecord {
 function createBaseParser(engine: EngineType): {
   state: CharacterRuntimeState
   setPreview: (preview: string | null | undefined) => void
+  clearError: () => void
   startRunning: (toolName?: string | null) => void
   finishTool: () => void
   completeTurn: () => void
@@ -58,19 +60,26 @@ function createBaseParser(engine: EngineType): {
     setPreview(preview) {
       state.lastAssistantPreview = preview?.trim() || null
     },
+    clearError() {
+      state.lastError = null
+      state.ptyAlive = true
+    },
     startRunning(toolName) {
+      state.lastError = null
       state.isRunning = true
       state.unreadDone = false
       state.needsInput = false
       state.needsApproval = false
       state.activeToolName = toolName ?? state.activeToolName
       state.activeToolKind = toolName ?? state.activeToolKind
+      state.ptyAlive = true
     },
     finishTool() {
       state.activeToolName = null
       state.activeToolKind = null
     },
     completeTurn() {
+      state.lastError = null
       state.isRunning = false
       state.activeToolName = null
       state.activeToolKind = null
@@ -81,6 +90,11 @@ function createBaseParser(engine: EngineType): {
     },
     setError(message) {
       state.isRunning = false
+      state.unreadDone = false
+      state.needsInput = false
+      state.needsApproval = false
+      state.activeToolName = null
+      state.activeToolKind = null
       state.lastError = message
       state.ptyAlive = false
     },
@@ -88,7 +102,7 @@ function createBaseParser(engine: EngineType): {
 }
 
 export function createClaudeSemanticParser(): SemanticParser {
-  const { state, setPreview, startRunning, finishTool, completeTurn, setError } =
+  const { state, setPreview, clearError, startRunning, finishTool, completeTurn, setError } =
     createBaseParser('claude-code')
   const activeTools = new Set<string>()
 
@@ -133,10 +147,14 @@ export function createClaudeSemanticParser(): SemanticParser {
       }
 
       if (record.type === 'user') {
+        clearError()
         const blocks = record.message?.content ?? []
         for (const block of blocks) {
-          if (block.type === 'tool_result' && block.id) {
-            activeTools.delete(block.id)
+          if (block.type === 'tool_result') {
+            const toolUseId = block.id ?? (block as ClaudeMessageBlock & { tool_use_id?: string }).tool_use_id
+            if (toolUseId) {
+              activeTools.delete(toolUseId)
+            }
           }
         }
         if (activeTools.size === 0) {
@@ -151,7 +169,7 @@ export function createClaudeSemanticParser(): SemanticParser {
 }
 
 export function createCodexSemanticParser(): SemanticParser {
-  const { state, setPreview, startRunning, finishTool, completeTurn, setError } =
+  const { state, setPreview, clearError, startRunning, finishTool, completeTurn, setError } =
     createBaseParser('codex')
   const activeCalls = new Set<string>()
 
@@ -172,7 +190,7 @@ export function createCodexSemanticParser(): SemanticParser {
       }
 
       if (record.type === 'event_msg' && payloadType === 'agent_message') {
-        setPreview(record.payload?.text ?? null)
+        setPreview(record.payload?.message ?? record.payload?.text ?? null)
         startRunning()
         return
       }
@@ -198,6 +216,7 @@ export function createCodexSemanticParser(): SemanticParser {
         record.type === 'response_item' &&
         (payloadType === 'function_call_output' || payloadType === 'custom_tool_call_output')
       ) {
+        clearError()
         const callId = record.payload?.call_id
         if (callId) activeCalls.delete(callId)
         if (activeCalls.size === 0) {

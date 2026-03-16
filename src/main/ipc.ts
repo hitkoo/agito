@@ -69,7 +69,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
     terminalSessions.killAll()
   })
 
-  runtimeService.syncCharacters(store.getCharacters())
+  runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
   runtimeService.onUpdate((state) => {
     broadcastToAll(IPC_EVENTS.CHARACTER_RUNTIME, state)
     broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
@@ -80,7 +80,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
   const buildStoreSnapshot = () => {
     const characters = store.getCharacters()
-    runtimeService.syncCharacters(characters)
+    runtimeService.syncCharacters(characters, store.getSessions())
     const runtimeStates = runtimeService.getAllStates()
     const runtimeByCharacterId = new Map(runtimeStates.map((state) => [state.characterId, state]))
 
@@ -107,11 +107,9 @@ export function registerIPCHandlers(store: AgitoStore): void {
     terminalSessions.spawn(characterId, command, args, cwd, {
       onData: (data, seq) => {
         batchPtyData(characterId, data, seq, broadcastToAll)
-        runtimeService.handlePtyData(characterId, data)
       },
-      onExit: ({ exitCode }) => {
+      onExit: () => {
         flushPtyData(characterId, broadcastToAll)
-        runtimeService.handlePtyExit(characterId, exitCode)
       },
     })
   }
@@ -133,7 +131,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       default:
         throw new Error(`Unknown store key: ${key}`)
     }
-    runtimeService.syncCharacters(store.getCharacters())
+    runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
     broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key })
   })
 
@@ -148,7 +146,6 @@ export function registerIPCHandlers(store: AgitoStore): void {
   )
 
   ipcMain.handle(IPC_COMMANDS.PTY_WRITE, (_, args: { characterId: string; data: string }) => {
-    runtimeService.handleUserInput(args.characterId)
     terminalSessions.write(args.characterId, args.data)
   })
 
@@ -213,7 +210,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       }
 
       store.saveCharacters([...characters, newCharacter])
-      runtimeService.syncCharacters(store.getCharacters())
+      runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
       broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
       return newCharacter
     }
@@ -227,7 +224,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
         c.id === characterId ? { ...c, ...updates } : c
       )
       store.saveCharacters(updated)
-      runtimeService.syncCharacters(store.getCharacters())
+      runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
       broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
     }
   )
@@ -235,7 +232,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
   ipcMain.handle(IPC_COMMANDS.CHARACTER_DELETE, (_, characterId: string) => {
     const characters = store.getCharacters()
     store.saveCharacters(characters.filter((c) => c.id !== characterId))
-    runtimeService.syncCharacters(store.getCharacters())
+    runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
     broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
   })
 
@@ -287,17 +284,17 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const updatedHistory = [sessionId, ...character.sessionHistory].slice(0, MAX_SESSION_HISTORY)
       const updatedCharacters = characters.map((c) =>
         c.id === characterId
-          ? { ...c, currentSessionId: sessionId, sessionHistory: updatedHistory, status: 'running' as const }
+          ? { ...c, currentSessionId: sessionId, sessionHistory: updatedHistory }
           : c
       )
       store.saveCharacters(updatedCharacters)
-      runtimeService.syncCharacters(store.getCharacters())
       runtimeService.startSession({
         characterId,
         engine: character.engine,
         sessionId,
         workingDirectory,
       })
+      runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
       broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
 
       return { sessionId, characterId }
@@ -364,17 +361,17 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
       const updatedCharacters = characters.map((c) =>
         c.id === characterId
-          ? { ...c, currentSessionId: sessionId, status: 'running' as const }
+          ? { ...c, currentSessionId: sessionId }
           : c
       )
       store.saveCharacters(updatedCharacters)
-      runtimeService.syncCharacters(store.getCharacters())
       runtimeService.startSession({
         characterId,
         engine: character.engine,
         sessionId,
         workingDirectory,
       })
+      runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
       broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
 
       return { sessionId, characterId }
@@ -390,11 +387,11 @@ export function registerIPCHandlers(store: AgitoStore): void {
     const characters = store.getCharacters()
     const updatedCharacters = characters.map((c) =>
       c.id === characterId
-        ? { ...c, currentSessionId: null, status: 'no_session' as const }
+        ? { ...c, currentSessionId: null }
         : c
     )
     store.saveCharacters(updatedCharacters)
-    runtimeService.syncCharacters(store.getCharacters())
+    runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
     broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
   })
 

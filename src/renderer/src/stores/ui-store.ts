@@ -33,6 +33,7 @@ interface UIStore {
 
   // Terminal dock
   terminalDock: TerminalDockState
+  terminalRefreshKey: Record<string, number>
 
   // Layout mode
   draggingManifestId: string | null
@@ -83,6 +84,7 @@ interface UIStore {
   setDockDetached: (detached: boolean) => void
   setDockMinimized: (minimized: boolean) => void
   syncTerminalDock: (state: TerminalDockSyncState) => void
+  bumpTerminalRefreshKey: (characterId: string) => void
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -100,6 +102,7 @@ export const useUIStore = create<UIStore>((set) => ({
   layoutClipboard: null,
 
   theme: 'dark',
+  terminalRefreshKey: {},
 
   terminalDock: {
     visible: false,
@@ -171,6 +174,13 @@ export const useUIStore = create<UIStore>((set) => ({
         activeCharacterId: state.activeCharacterId,
         ownerWindow: state.ownerWindow,
         detachedReady: state.detachedReady,
+      },
+    })),
+  bumpTerminalRefreshKey: (characterId) =>
+    set((s) => ({
+      terminalRefreshKey: {
+        ...s.terminalRefreshKey,
+        [characterId]: (s.terminalRefreshKey[characterId] ?? 0) + 1,
       },
     })),
 }))

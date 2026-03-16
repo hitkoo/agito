@@ -52,6 +52,23 @@ export function CharacterContextMenu(): ReactElement | null {
     openTerminalDock(characterId)
   }, [contextMenu, closeContextMenu, loadCharacters, openTerminalDock])
 
+  const bumpTerminalRefreshKey = useUIStore((s) => s.bumpTerminalRefreshKey)
+
+  const handleRefreshSession = useCallback(async () => {
+    if (!contextMenu) return
+    const characterId = contextMenu.characterId
+    closeContextMenu()
+    const char = useCharacterStore.getState().characters.find((c) => c.id === characterId)
+    if (!char?.currentSessionId) return
+    // Re-resume same session — replaceSession() internally kills old PTY
+    await window.api.invoke(IPC_COMMANDS.SESSION_RESUME, {
+      characterId,
+      sessionId: char.currentSessionId,
+    })
+    await loadCharacters()
+    bumpTerminalRefreshKey(characterId)
+  }, [contextMenu, closeContextMenu, loadCharacters, bumpTerminalRefreshKey])
+
   const handleUnassignSession = useCallback(async () => {
     if (!contextMenu) return
     closeContextMenu()
@@ -91,6 +108,10 @@ export function CharacterContextMenu(): ReactElement | null {
         </button>
       ) : (
         <>
+          <button className={menuItemClass} onClick={handleRefreshSession}>
+            Refresh Session
+          </button>
+          <div className="my-1 h-px bg-border" />
           <button className={menuItemClass} onClick={handleAssignSession}>
             Assign Other Session
           </button>

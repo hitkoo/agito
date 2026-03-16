@@ -60,7 +60,7 @@ const STATUS_COLORS: Record<CharacterStatus, number> = {
   need_input: 0xffd93d,
   need_approval: 0xffb347,
   done: 0x51cf66,
-  error_disconnected: 0xff6b6b,
+  error: 0xff6b6b,
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +438,7 @@ const STATUS_BADGE_EMOJI: Record<string, string> = {
   need_input: '\u{1F4AD}',
   need_approval: '\u{1F6A7}',
   done: '\u{2705}',
-  error_disconnected: '\u{2757}',
+  error: '\u{2757}',
 }
 
 function getStatusBadgeText(
@@ -452,7 +452,7 @@ function getStatusBadgeText(
   if (status === 'need_approval') {
     return runtimeState?.activeToolName ? `approve ${runtimeState.activeToolName}` : 'approve'
   }
-  if (status === 'error_disconnected') return 'offline'
+  if (status === 'error') return 'error'
   return status.replace(/_/g, ' ')
 }
 
@@ -998,7 +998,7 @@ function CharacterSprite({
         return <IdleEffect w={w} h={h} color={color} />
       case 'running':
         return <WorkingEffect w={w} h={h} color={color} />
-      case 'error_disconnected':
+      case 'error':
         return <ErrorEffect w={w} h={h} color={color} />
       case 'done':
         return <DoneEffect w={w} h={h} color={color} />

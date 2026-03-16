@@ -19,7 +19,7 @@ const STATUS_EMOJI: Record<string, string> = {
   need_input: '\u{1F4AD}',
   running: '\u{26A1}',
   need_approval: '\u{1F6A7}',
-  error_disconnected: '\u{2757}',
+  error: '\u{2757}',
   done: '\u{2705}',
 }
 
