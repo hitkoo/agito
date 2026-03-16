@@ -189,7 +189,11 @@ export class TerminalSessionService {
     const session = this.sessions.get(characterId)
     if (!session) return
 
-    session.pty?.resize(cols, rows)
+    try {
+      session.pty?.resize(cols, rows)
+    } catch {
+      // PTY already dead (EBADF) — ignore
+    }
     session.terminal.resize(cols, rows)
     session.snapshotDirty = true
   }

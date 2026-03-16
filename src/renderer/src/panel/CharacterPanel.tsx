@@ -14,10 +14,12 @@ import {
 } from '../components/ui/dropdown-menu'
 
 const STATUS_EMOJI: Record<string, string> = {
+  no_session: '\u{26AA}',
   idle: '\u{1F4A4}',
-  waiting: '\u{1F4AD}',
-  working: '\u{26A1}',
-  error: '\u{2757}',
+  need_input: '\u{1F4AD}',
+  running: '\u{26A1}',
+  need_approval: '\u{1F6A7}',
+  error_disconnected: '\u{2757}',
   done: '\u{2705}',
 }
 

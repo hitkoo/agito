@@ -1,10 +1,15 @@
+import type {
+  CharacterMarkerStatus,
+  CharacterRuntimeState,
+} from './character-runtime-state'
+
 // --- Engine ---
 
 export type EngineType = 'claude-code' | 'codex'
 
 // --- Character ---
 
-export type CharacterStatus = 'idle' | 'waiting' | 'working' | 'error' | 'done'
+export type CharacterStatus = CharacterMarkerStatus
 
 export interface GridPosition {
   x: number
@@ -98,6 +103,7 @@ export interface AgitoPersistentData {
   roomLayout: RoomLayout
   sessions: SessionMapping[]
   settings: AgitoSettings
+  runtimeStates?: CharacterRuntimeState[]
 }
 
 // --- Settings ---

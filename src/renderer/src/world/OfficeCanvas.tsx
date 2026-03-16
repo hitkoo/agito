@@ -3,6 +3,7 @@ import { type ReactElement, useCallback, useMemo, useState, useEffect, useRef } 
 import { Graphics as PixiGraphics, TextStyle, Container as PixiContainer, Texture } from 'pixi.js'
 import { loadTexture } from './AssetLoader'
 import { useCharacterStore } from '../stores/character-store'
+import { useRuntimeStore } from '../stores/runtime-store'
 import { useUIStore, type AppTab, type ThemeMode } from '../stores/ui-store'
 import { useRoomStore } from '../stores/room-store'
 import type {
@@ -13,6 +14,7 @@ import type {
   GridPosition,
   ItemFootprint,
 } from '../../../shared/types'
+import type { CharacterRuntimeState } from '../../../shared/character-runtime-state'
 import { getManifestById } from '../../../shared/item-manifests'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 
@@ -52,11 +54,13 @@ function getEffectiveMode(theme: ThemeMode): 'dark' | 'light' {
 }
 
 const STATUS_COLORS: Record<CharacterStatus, number> = {
-  idle: 0x6c757d,
-  working: 0x4ecdc4,
-  error: 0xff6b6b,
+  no_session: 0x6c757d,
+  idle: 0x7c8591,
+  running: 0x4ecdc4,
+  need_input: 0xffd93d,
+  need_approval: 0xffb347,
   done: 0x51cf66,
-  waiting: 0xffd93d,
+  error_disconnected: 0xff6b6b,
 }
 
 // ---------------------------------------------------------------------------
@@ -430,23 +434,42 @@ function WaitingEffect({ w, h, color }: { w: number; h: number; color: number })
 // ---------------------------------------------------------------------------
 
 const STATUS_BADGE_EMOJI: Record<string, string> = {
-  working: '\u{26A1}',
-  error: '\u{2757}',
+  running: '\u{26A1}',
+  need_input: '\u{1F4AD}',
+  need_approval: '\u{1F6A7}',
   done: '\u{2705}',
-  waiting: '\u{1F4AD}',
+  error_disconnected: '\u{2757}',
+}
+
+function getStatusBadgeText(
+  status: string,
+  runtimeState?: CharacterRuntimeState
+): string {
+  if (status === 'running' && runtimeState?.activeToolName) {
+    return runtimeState.activeToolName
+  }
+  if (status === 'need_input') return 'reply'
+  if (status === 'need_approval') {
+    return runtimeState?.activeToolName ? `approve ${runtimeState.activeToolName}` : 'approve'
+  }
+  if (status === 'error_disconnected') return 'offline'
+  return status.replace(/_/g, ' ')
 }
 
 function StatusBadge({
   status,
   w,
+  runtimeState,
 }: {
   status: string
   w: number
+  runtimeState?: CharacterRuntimeState
 }): ReactElement | null {
-  if (status === 'idle') return null
+  if (status === 'idle' || status === 'no_session') return null
 
   const emoji = STATUS_BADGE_EMOJI[status] || ''
   const color = STATUS_COLORS[status as keyof typeof STATUS_COLORS] ?? STATUS_COLORS.idle
+  const label = getStatusBadgeText(status, runtimeState)
 
   const badgeLabelStyle = useMemo(
     () =>
@@ -477,7 +500,7 @@ function StatusBadge({
     <>
       <Graphics draw={drawPill} />
       <Text
-        text={`${emoji} ${status}`}
+        text={`${emoji} ${label}`.trim()}
         x={w / 2}
         y={-pillH / 2 - 6}
         anchor={{ x: 0.5, y: 0.5 }}
@@ -913,6 +936,7 @@ function FurnitureSprite({
 
 function CharacterSprite({
   character,
+  runtimeState,
   cellSize,
   onSelect,
   onRightClick,
@@ -920,6 +944,7 @@ function CharacterSprite({
   isSelected,
 }: {
   character: Character & { gridPosition: GridPosition }
+  runtimeState?: CharacterRuntimeState
   cellSize: number
   onSelect: (id: string | null) => void
   onRightClick: (characterId: string, x: number, y: number) => void
@@ -968,15 +993,17 @@ function CharacterSprite({
 
   const statusEffect = useMemo((): ReactElement => {
     switch (character.status) {
+      case 'no_session':
       case 'idle':
         return <IdleEffect w={w} h={h} color={color} />
-      case 'working':
+      case 'running':
         return <WorkingEffect w={w} h={h} color={color} />
-      case 'error':
+      case 'error_disconnected':
         return <ErrorEffect w={w} h={h} color={color} />
       case 'done':
         return <DoneEffect w={w} h={h} color={color} />
-      case 'waiting':
+      case 'need_input':
+      case 'need_approval':
         return <WaitingEffect w={w} h={h} color={color} />
       default:
         return <IdleEffect w={w} h={h} color={color} />
@@ -1099,7 +1126,7 @@ function CharacterSprite({
       {texture ? (
         <>
           <Sprite texture={texture} width={w} height={h} />
-          <StatusBadge status={character.status} w={w} />
+          <StatusBadge status={character.status} w={w} runtimeState={runtimeState} />
         </>
       ) : (
         statusEffect
@@ -1152,6 +1179,7 @@ export function OfficeCanvas(): ReactElement {
   const stageH = cellSize * gridRows
 
   const characters = useCharacterStore((s) => s.characters)
+  const runtimeStates = useRuntimeStore((s) => s.states)
   const openTerminalDock = useUIStore((s) => s.openTerminalDock)
   const openContextMenu = useUIStore((s) => s.openContextMenu)
   const activeTab = useUIStore((s) => s.activeTab)
@@ -1309,6 +1337,7 @@ export function OfficeCanvas(): ReactElement {
             <CharacterSprite
               key={char.id}
               character={char}
+              runtimeState={runtimeStates[char.id]}
               cellSize={cellSize}
               onSelect={(id) => { if (id) openTerminalDock(id) }}
               onRightClick={openContextMenu}

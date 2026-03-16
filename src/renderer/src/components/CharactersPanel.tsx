@@ -123,11 +123,13 @@ function useSpritePreview(spritePath: string): string | null {
 // ---------------------------------------------------------------------------
 
 const STATUS_COLORS: Record<string, string> = {
-  working: 'bg-green-500',
+  no_session: 'bg-gray-500',
   idle: 'bg-gray-400',
-  error: 'bg-red-500',
-  waiting: 'bg-yellow-500',
+  running: 'bg-green-500',
+  need_input: 'bg-yellow-400',
+  need_approval: 'bg-orange-400',
   done: 'bg-green-500',
+  error_disconnected: 'bg-red-500',
 }
 
 // ---------------------------------------------------------------------------

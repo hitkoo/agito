@@ -8,7 +8,7 @@ export const codexAdapter: EngineAdapter = {
   buildSpawnArgs(options: EngineSpawnOptions): string[] {
     const args: string[] = []
     if (options.sessionId) {
-      args.push('--resume', options.sessionId)
+      args.push('resume', options.sessionId)
     }
     if (options.additionalArgs) {
       args.push(...options.additionalArgs)

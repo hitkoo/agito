@@ -1,16 +1,17 @@
 import { ipcMain, BrowserWindow, dialog, app } from 'electron'
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, copyFileSync, statSync } from 'fs'
+import initSqlJs from 'sql.js'
 import { join, basename, extname } from 'path'
 import { homedir } from 'os'
 import { IPC_COMMANDS, IPC_EVENTS } from '../shared/ipc-channels'
 import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, AssetGenerateRequest, AssetGenerateResult, ScannedSession } from '../shared/types'
 import type { AgitoStore } from './store'
 import { TerminalSessionService } from './terminal-session-service'
-import { StatusDetector } from './status-detector'
 import { GRID_COLS, GRID_ROWS, FOOTPRINTS, MAX_SESSION_HISTORY, ASSETS_DIR } from '../shared/constants'
 import type { EngineAdapter } from './engine/types'
 import { claudeCodeAdapter } from './engine/claude-code'
 import { codexAdapter } from './engine/codex'
+import { CharacterRuntimeService } from './character-runtime-service'
 
 // 16ms PTY output batching (~60fps) to prevent xterm.js write() flooding
 const PTY_BATCH_MS = 16
@@ -63,47 +64,62 @@ function flushPtyData(characterId: string, broadcast: (event: string, payload: u
 
 export function registerIPCHandlers(store: AgitoStore): void {
   const terminalSessions = new TerminalSessionService()
-  const statusDetector = new StatusDetector()
+  const runtimeService = new CharacterRuntimeService()
   app.once('before-quit', () => {
     terminalSessions.killAll()
   })
 
-  const attachStatusListener = (characterId: string): void => {
-    statusDetector.attach(characterId, (status) => {
-      broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, { characterId, status })
+  runtimeService.syncCharacters(store.getCharacters())
+  runtimeService.onUpdate((state) => {
+    broadcastToAll(IPC_EVENTS.CHARACTER_RUNTIME, state)
+    broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
+      characterId: state.characterId,
+      status: state.markerStatus,
     })
+  })
+
+  const buildStoreSnapshot = () => {
+    const characters = store.getCharacters()
+    runtimeService.syncCharacters(characters)
+    const runtimeStates = runtimeService.getAllStates()
+    const runtimeByCharacterId = new Map(runtimeStates.map((state) => [state.characterId, state]))
+
+    return {
+      characters: characters.map((character) => ({
+        ...character,
+        status:
+          runtimeByCharacterId.get(character.id)?.markerStatus ??
+          (character.currentSessionId ? 'idle' : 'no_session'),
+      })),
+      roomLayout: store.getRoomLayout(),
+      sessions: store.getSessions(),
+      settings: store.getSettings(),
+      runtimeStates,
+    }
   }
 
   const spawnManagedSession = (
     characterId: string,
     command: string,
     args: string[],
-    cwd: string,
-    disconnectedStatus: Character['status']
+    cwd: string
   ): void => {
-    statusDetector.detach(characterId)
     terminalSessions.spawn(characterId, command, args, cwd, {
       onData: (data, seq) => {
         batchPtyData(characterId, data, seq, broadcastToAll)
-        statusDetector.feedData(characterId, data)
+        runtimeService.handlePtyData(characterId, data)
       },
       onExit: ({ exitCode }) => {
         flushPtyData(characterId, broadcastToAll)
-        statusDetector.detach(characterId)
-        broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
-          characterId,
-          status: exitCode === 0 ? disconnectedStatus : 'error',
-        })
+        runtimeService.handlePtyExit(characterId, exitCode)
       },
     })
-
-    attachStatusListener(characterId)
   }
 
   // --- Store operations ---
 
   ipcMain.handle(IPC_COMMANDS.STORE_READ, () => {
-    return store.getAll()
+    return buildStoreSnapshot()
   })
 
   ipcMain.handle(IPC_COMMANDS.STORE_WRITE, (_, key: string, data: unknown) => {
@@ -117,6 +133,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       default:
         throw new Error(`Unknown store key: ${key}`)
     }
+    runtimeService.syncCharacters(store.getCharacters())
     broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key })
   })
 
@@ -125,12 +142,13 @@ export function registerIPCHandlers(store: AgitoStore): void {
   ipcMain.handle(
     IPC_COMMANDS.PTY_SPAWN,
     (_, characterId: string, args: { command: string; args: string[]; cwd: string }) => {
-      spawnManagedSession(characterId, args.command, args.args, args.cwd, 'idle')
+      spawnManagedSession(characterId, args.command, args.args, args.cwd)
       return { success: true }
     }
   )
 
   ipcMain.handle(IPC_COMMANDS.PTY_WRITE, (_, args: { characterId: string; data: string }) => {
+    runtimeService.handleUserInput(args.characterId)
     terminalSessions.write(args.characterId, args.data)
   })
 
@@ -139,7 +157,6 @@ export function registerIPCHandlers(store: AgitoStore): void {
   })
 
   ipcMain.handle(IPC_COMMANDS.PTY_KILL, (_, characterId: string) => {
-    statusDetector.detach(characterId)
     terminalSessions.kill(characterId)
   })
 
@@ -154,6 +171,18 @@ export function registerIPCHandlers(store: AgitoStore): void {
   ipcMain.handle(IPC_COMMANDS.TERMINAL_GET_SNAPSHOT, async (_, characterId: string) => {
     return terminalSessions.getSnapshot(characterId)
   })
+
+  ipcMain.handle(IPC_COMMANDS.CHARACTER_RUNTIME_SNAPSHOT, () => {
+    return runtimeService.getAllStates()
+  })
+
+  ipcMain.handle(
+    IPC_COMMANDS.CHARACTER_RUNTIME_SET_ATTENTION,
+    (_, args: { characterId: string; attentionActive: boolean }) => {
+      runtimeService.setAttention(args.characterId, args.attentionActive)
+      return { success: true }
+    }
+  )
 
   // --- Character CRUD ---
 
@@ -175,7 +204,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
         gridPosition,
         currentSessionId: null,
         sessionHistory: [],
-        status: 'idle',
+        status: 'no_session',
         stats: {
           createdAt: now,
           totalTasks: 0,
@@ -184,6 +213,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       }
 
       store.saveCharacters([...characters, newCharacter])
+      runtimeService.syncCharacters(store.getCharacters())
       broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
       return newCharacter
     }
@@ -197,6 +227,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
         c.id === characterId ? { ...c, ...updates } : c
       )
       store.saveCharacters(updated)
+      runtimeService.syncCharacters(store.getCharacters())
       broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
     }
   )
@@ -204,6 +235,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
   ipcMain.handle(IPC_COMMANDS.CHARACTER_DELETE, (_, characterId: string) => {
     const characters = store.getCharacters()
     store.saveCharacters(characters.filter((c) => c.id !== characterId))
+    runtimeService.syncCharacters(store.getCharacters())
     broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
   })
 
@@ -235,7 +267,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       }
 
       const spawnArgs = adapter.buildSpawnArgs({ soulPath: soulContent, workingDirectory })
-      spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory, 'done')
+      spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
 
       const sessionId = nanoid()
       const now = new Date().toISOString()
@@ -255,10 +287,17 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const updatedHistory = [sessionId, ...character.sessionHistory].slice(0, MAX_SESSION_HISTORY)
       const updatedCharacters = characters.map((c) =>
         c.id === characterId
-          ? { ...c, currentSessionId: sessionId, sessionHistory: updatedHistory, status: 'working' as const }
+          ? { ...c, currentSessionId: sessionId, sessionHistory: updatedHistory, status: 'running' as const }
           : c
       )
       store.saveCharacters(updatedCharacters)
+      runtimeService.syncCharacters(store.getCharacters())
+      runtimeService.startSession({
+        characterId,
+        engine: character.engine,
+        sessionId,
+        workingDirectory,
+      })
       broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
 
       return { sessionId, characterId }
@@ -301,7 +340,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       }
 
       const spawnArgs = adapter.buildSpawnArgs({ sessionId, soulPath: soulContent, workingDirectory })
-      spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory, 'done')
+      spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
 
       const now = new Date().toISOString()
       const sessions = store.getSessions()
@@ -325,10 +364,17 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
       const updatedCharacters = characters.map((c) =>
         c.id === characterId
-          ? { ...c, currentSessionId: sessionId, status: 'working' as const }
+          ? { ...c, currentSessionId: sessionId, status: 'running' as const }
           : c
       )
       store.saveCharacters(updatedCharacters)
+      runtimeService.syncCharacters(store.getCharacters())
+      runtimeService.startSession({
+        characterId,
+        engine: character.engine,
+        sessionId,
+        workingDirectory,
+      })
       broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
 
       return { sessionId, characterId }
@@ -338,16 +384,17 @@ export function registerIPCHandlers(store: AgitoStore): void {
   ipcMain.handle(IPC_COMMANDS.SESSION_STOP, (_, args: { characterId: string }) => {
     const { characterId } = args
 
-    statusDetector.detach(characterId)
     terminalSessions.kill(characterId)
+    runtimeService.stopSession(characterId)
 
     const characters = store.getCharacters()
     const updatedCharacters = characters.map((c) =>
       c.id === characterId
-        ? { ...c, currentSessionId: null, status: 'idle' as const }
+        ? { ...c, currentSessionId: null, status: 'no_session' as const }
         : c
     )
     store.saveCharacters(updatedCharacters)
+    runtimeService.syncCharacters(store.getCharacters())
     broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
   })
 
@@ -398,30 +445,62 @@ export function registerIPCHandlers(store: AgitoStore): void {
       // Claude CLI not installed
     }
 
-    // Scan Codex sessions: ~/.codex/session_index.jsonl
+    // Scan Codex sessions: ~/.codex/state_5.sqlite (SoT), fallback to session_index.jsonl
+    let codexScanned = false
     try {
-      const codexIndex = join(homedir(), '.codex', 'session_index.jsonl')
-      if (existsSync(codexIndex)) {
-        const lines = readFileSync(codexIndex, 'utf-8').split('\n').filter(Boolean)
-        for (const line of lines) {
-          try {
-            const entry = JSON.parse(line)
-            if (!entry.id) continue
-            results.push({
-              sessionId: entry.id,
-              engineType: 'codex',
-              workingDirectory: entry.cwd || '',
-              label: entry.thread_name || entry.id.slice(0, 8),
-              createdAt: entry.updated_at || '',
-              lastActiveAt: entry.updated_at,
-            })
-          } catch {
-            // skip unparseable lines
-          }
+      const codexDb = join(homedir(), '.codex', 'state_5.sqlite')
+      if (existsSync(codexDb)) {
+        const SQL = await initSqlJs()
+        const buffer = readFileSync(codexDb)
+        const db = new SQL.Database(buffer)
+        const stmt = db.prepare(
+          'SELECT id, title, cwd, created_at, updated_at, git_branch FROM threads WHERE archived = 0 ORDER BY updated_at DESC'
+        )
+        while (stmt.step()) {
+          const row = stmt.getAsObject()
+          results.push({
+            sessionId: String(row.id),
+            engineType: 'codex',
+            workingDirectory: String(row.cwd || ''),
+            label: String(row.title || row.git_branch || String(row.id).slice(0, 8)),
+            createdAt: new Date(Number(row.created_at) * 1000).toISOString(),
+            lastActiveAt: new Date(Number(row.updated_at) * 1000).toISOString(),
+          })
         }
+        stmt.free()
+        db.close()
+        codexScanned = true
       }
     } catch {
-      // Codex CLI not installed
+      // SQLite read failed, try fallback
+    }
+
+    // Fallback: session_index.jsonl (no cwd field)
+    if (!codexScanned) {
+      try {
+        const codexIndex = join(homedir(), '.codex', 'session_index.jsonl')
+        if (existsSync(codexIndex)) {
+          const lines = readFileSync(codexIndex, 'utf-8').split('\n').filter(Boolean)
+          for (const line of lines) {
+            try {
+              const entry = JSON.parse(line)
+              if (!entry.id) continue
+              results.push({
+                sessionId: entry.id,
+                engineType: 'codex',
+                workingDirectory: entry.cwd || '',
+                label: entry.thread_name || entry.id.slice(0, 8),
+                createdAt: entry.updated_at || '',
+                lastActiveAt: entry.updated_at,
+              })
+            } catch {
+              // skip unparseable lines
+            }
+          }
+        }
+      } catch {
+        // Codex CLI not installed
+      }
     }
 
     // Sort by lastActiveAt descending (most recent first)
@@ -653,17 +732,6 @@ export function registerIPCHandlers(store: AgitoStore): void {
     }
   })
 
-  // --- Reset status on startup ---
-  // App restarted = all PTYs are dead. Reset status to idle but keep session assignments.
-  const startupCharacters = store.getCharacters()
-  const needsReset = startupCharacters.some((c) => c.status !== 'idle')
-  if (needsReset) {
-    store.saveCharacters(
-      startupCharacters.map((c) =>
-        c.status !== 'idle' ? { ...c, status: 'idle' as const } : c
-      )
-    )
-  }
 }
 
 function getEngineAdapter(engineType: EngineType): EngineAdapter {

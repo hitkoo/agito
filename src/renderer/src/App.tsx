@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from 'react'
 import { useCharacterStore } from './stores/character-store'
+import { useRuntimeStore } from './stores/runtime-store'
 import { useRoomStore } from './stores/room-store'
 import { useUIStore } from './stores/ui-store'
 import { IPC_COMMANDS } from '../../shared/ipc-channels'
@@ -70,6 +71,7 @@ export default function App(): JSX.Element {
   const activeTab = useUIStore((s) => s.activeTab)
   const setTheme = useUIStore((s) => s.setTheme)
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
+  const loadRuntime = useRuntimeStore((s) => s.loadFromMain)
   const loadRoom = useRoomStore((s) => s.loadFromMain)
 
   useIPCSync()
@@ -82,8 +84,9 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     loadCharacters()
+    loadRuntime()
     loadRoom()
-  }, [loadCharacters, loadRoom])
+  }, [loadCharacters, loadRoom, loadRuntime])
 
   const setDraggingManifestId = useUIStore((s) => s.setDraggingManifestId)
 

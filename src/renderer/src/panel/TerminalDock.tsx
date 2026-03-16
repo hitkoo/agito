@@ -16,19 +16,23 @@ import { toast } from 'sonner'
 // ---------------------------------------------------------------------------
 
 const STATUS_DOT_COLORS: Record<string, string> = {
-  idle: '#6c757d',
-  working: '#4ecdc4',
-  error: '#ff6b6b',
+  no_session: '#6c757d',
+  idle: '#7c8591',
+  running: '#4ecdc4',
+  need_input: '#ffd93d',
+  need_approval: '#ffb347',
   done: '#51cf66',
-  waiting: '#ffd93d',
+  error_disconnected: '#ff6b6b',
 }
 
 const STATUS_LABELS: Record<string, string> = {
+  no_session: 'no session',
   idle: 'idle',
-  working: 'working',
-  error: 'error',
+  running: 'running',
+  need_input: 'need input',
+  need_approval: 'need approval',
   done: 'done',
-  waiting: 'waiting',
+  error_disconnected: 'offline',
 }
 
 // ---------------------------------------------------------------------------
@@ -91,11 +95,48 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
     ownerWindow: dock.ownerWindow,
   })
 
+  const attendedCharacterRef = useRef<string | null>(null)
+  useEffect(() => {
+    const nextAttendedCharacterId =
+      renderMode === 'attached-dock' || renderMode === 'detached-dock'
+        ? dock.activeCharacterId
+        : null
+    const previousCharacterId = attendedCharacterRef.current
+
+    if (previousCharacterId && previousCharacterId !== nextAttendedCharacterId) {
+      void window.api.invoke(IPC_COMMANDS.CHARACTER_RUNTIME_SET_ATTENTION, {
+        characterId: previousCharacterId,
+        attentionActive: false,
+      })
+    }
+
+    if (nextAttendedCharacterId && nextAttendedCharacterId !== previousCharacterId) {
+      void window.api.invoke(IPC_COMMANDS.CHARACTER_RUNTIME_SET_ATTENTION, {
+        characterId: nextAttendedCharacterId,
+        attentionActive: true,
+      })
+    }
+
+    attendedCharacterRef.current = nextAttendedCharacterId
+
+    return () => {
+      if (attendedCharacterRef.current) {
+        void window.api.invoke(IPC_COMMANDS.CHARACTER_RUNTIME_SET_ATTENTION, {
+          characterId: attendedCharacterRef.current,
+          attentionActive: false,
+        })
+        attendedCharacterRef.current = null
+      }
+    }
+  }, [dock.activeCharacterId, renderMode])
+
   // Only show tabs for characters with alive PTYs + the currently active character
   const visibleChars = assignedChars.filter((c) => alivePtys.has(c.id) || c.id === dock.activeCharacterId)
 
   // Auto-resume: when active character has session but PTY is dead, resume automatically
+  // Cooldown prevents rapid retry loops when sessions die immediately after spawn
   const [resumingChars, setResumingChars] = useState<Set<string>>(new Set())
+  const resumeFailures = useRef<Map<string, { count: number; lastAttempt: number }>>(new Map())
   useEffect(() => {
     if (!shouldAutoResumeTerminal({
       renderMode,
@@ -110,18 +151,28 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
 
     const charId = dock.activeCharacterId
     if (!charId) return
+
+    // Cooldown: max 2 retries, 5s cooldown between attempts
+    const failure = resumeFailures.current.get(charId)
+    if (failure) {
+      if (failure.count >= 2) return // stop retrying after 2 failures
+      if (Date.now() - failure.lastAttempt < 5000) return // 5s cooldown
+    }
+
     setResumingChars((prev) => new Set(prev).add(charId))
 
     ;(async () => {
       try {
-        // SESSION_RESUME looks up workingDirectory from sessions.json if not provided
         await window.api.invoke(IPC_COMMANDS.SESSION_RESUME, {
           characterId: charId,
           sessionId: char.currentSessionId,
         })
         await loadCharacters()
         setAlivePtys((prev) => new Set(prev).add(charId))
+        resumeFailures.current.delete(charId) // reset on success
       } catch (err) {
+        const prev = resumeFailures.current.get(charId) ?? { count: 0, lastAttempt: 0 }
+        resumeFailures.current.set(charId, { count: prev.count + 1, lastAttempt: Date.now() })
         toast.error(err instanceof Error ? err.message : String(err))
         // Clear invalid session so user gets assign view
         await window.api.invoke(IPC_COMMANDS.SESSION_STOP, { characterId: charId })
@@ -164,6 +215,51 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
     setDockActiveCharacter(characterId)
     void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_SET_ACTIVE_CHARACTER, characterId)
   }, [setDockActiveCharacter])
+
+  // --- Tab context menu ---
+  const [tabContextMenu, setTabContextMenu] = useState<{ characterId: string; x: number; y: number } | null>(null)
+
+  const handleTabContextMenu = useCallback((characterId: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setTabContextMenu({ characterId, x: e.clientX, y: e.clientY })
+  }, [])
+
+  // Close tab context menu on click outside or ESC
+  useEffect(() => {
+    if (!tabContextMenu) return
+    const close = (): void => setTabContextMenu(null)
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') close() }
+    const timer = setTimeout(() => {
+      window.addEventListener('mousedown', close)
+      window.addEventListener('keydown', onKey)
+    }, 0)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [tabContextMenu])
+
+  const handleTabAssignSession = useCallback(async () => {
+    if (!tabContextMenu) return
+    const charId = tabContextMenu.characterId
+    setTabContextMenu(null)
+    const char = characters.find((c) => c.id === charId)
+    if (char?.currentSessionId) {
+      await window.api.invoke(IPC_COMMANDS.SESSION_STOP, { characterId: charId })
+      await loadCharacters()
+    }
+    handleTabSelect(charId)
+  }, [tabContextMenu, characters, loadCharacters, handleTabSelect])
+
+  const handleTabUnassignSession = useCallback(async () => {
+    if (!tabContextMenu) return
+    const charId = tabContextMenu.characterId
+    setTabContextMenu(null)
+    await window.api.invoke(IPC_COMMANDS.SESSION_STOP, { characterId: charId })
+    await loadCharacters()
+  }, [tabContextMenu, loadCharacters])
 
   // --- Drag ---
   const onDragStart = useCallback(
@@ -331,6 +427,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
               isActive={c.id === dock.activeCharacterId}
               detachedMode={detachedMode}
               onClick={() => handleTabSelect(c.id)}
+              onContextMenu={(e) => handleTabContextMenu(c.id, e)}
             />
           ))}
           {/* Show current character tab even if no active session */}
@@ -343,6 +440,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
                 isActive={true}
                 detachedMode={detachedMode}
                 onClick={() => {}}
+                onContextMenu={(e) => handleTabContextMenu(char.id, e)}
               />
             ) : (
               <span className="text-xs text-muted-foreground px-3 py-2">No active sessions</span>
@@ -434,6 +532,36 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
       </div>
     </div>
     )}
+
+    {/* Tab context menu */}
+    {tabContextMenu && (() => {
+      const char = characters.find((c) => c.id === tabContextMenu.characterId)
+      if (!char) return null
+      const menuItemClass = 'relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground'
+      return (
+        <div
+          className="fixed z-[200] min-w-[160px] rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+          style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {char.currentSessionId === null ? (
+            <button className={menuItemClass} onClick={handleTabAssignSession}>
+              Assign Session
+            </button>
+          ) : (
+            <>
+              <button className={menuItemClass} onClick={handleTabAssignSession}>
+                Assign Other Session
+              </button>
+              <button className={menuItemClass} onClick={handleTabUnassignSession}>
+                Unassign Session
+              </button>
+            </>
+          )}
+        </div>
+      )
+    })()}
     </>
   )
 }
@@ -447,11 +575,13 @@ function TabButton({
   isActive,
   detachedMode,
   onClick,
+  onContextMenu,
 }: {
   character: Character
   isActive: boolean
   detachedMode: boolean
   onClick: () => void
+  onContextMenu: (e: React.MouseEvent) => void
 }): ReactElement {
   const [skinPreview, setSkinPreview] = useState<string | null>(null)
 
@@ -471,6 +601,7 @@ function TabButton({
           : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
       }`}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       data-no-drag
       style={detachedMode ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}}
     >

@@ -2,6 +2,7 @@
 export const IPC_EVENTS = {
   PTY_DATA: 'pty:data',
   CHARACTER_STATUS: 'character:status',
+  CHARACTER_RUNTIME: 'character:runtime',
   STORE_UPDATED: 'store:updated',
   ASSET_GENERATE_PROGRESS: 'asset:generate-progress',
 } as const
@@ -25,6 +26,8 @@ export const IPC_COMMANDS = {
   CHARACTER_CREATE: 'character:create',
   CHARACTER_UPDATE: 'character:update',
   CHARACTER_DELETE: 'character:delete',
+  CHARACTER_RUNTIME_SET_ATTENTION: 'character-runtime:set-attention',
+  CHARACTER_RUNTIME_SNAPSHOT: 'character-runtime:snapshot',
 
   // Session operations
   SESSION_START: 'session:start',
