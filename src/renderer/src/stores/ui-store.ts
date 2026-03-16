@@ -12,6 +12,7 @@ interface ContextMenuState {
 interface TerminalDockState {
   visible: boolean
   minimized: boolean
+  detached: boolean
   activeCharacterId: string | null
   position: { x: number; y: number }
   size: { width: number; height: number }
@@ -76,6 +77,7 @@ interface UIStore {
   setDockActiveCharacter: (characterId: string) => void
   setDockPosition: (position: { x: number; y: number }) => void
   setDockSize: (size: { width: number; height: number }) => void
+  setDockDetached: (detached: boolean) => void
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -97,6 +99,7 @@ export const useUIStore = create<UIStore>((set) => ({
   terminalDock: {
     visible: false,
     minimized: false,
+    detached: false,
     activeCharacterId: null,
     position: { x: -1, y: -1 }, // -1 = auto-center on first open
     size: { width: 720, height: 520 },
@@ -143,5 +146,9 @@ export const useUIStore = create<UIStore>((set) => ({
   setDockSize: (size) =>
     set((s) => ({
       terminalDock: { ...s.terminalDock, size },
+    })),
+  setDockDetached: (detached) =>
+    set((s) => ({
+      terminalDock: { ...s.terminalDock, detached },
     })),
 }))

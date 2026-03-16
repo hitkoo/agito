@@ -1,7 +1,7 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
 import { useCharacterStore } from '../stores/character-store'
 import { useUIStore } from '../stores/ui-store'
-import { IPC_COMMANDS } from '../../../shared/ipc-channels'
+import { IPC_COMMANDS, IPC_DOCK_EVENTS } from '../../../shared/ipc-channels'
 import type { Character, ScannedSession } from '../../../shared/types'
 import { TerminalView } from './TerminalView'
 import { toast } from 'sonner'
@@ -30,9 +30,8 @@ const STATUS_LABELS: Record<string, string> = {
 // TerminalDock component
 // ---------------------------------------------------------------------------
 
-export function TerminalDock(): ReactElement | null {
+export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean } = {}): ReactElement | null {
   const dock = useUIStore((s) => s.terminalDock)
-  const closeTerminalDock = useUIStore((s) => s.closeTerminalDock)
   const minimizeTerminalDock = useUIStore((s) => s.minimizeTerminalDock)
   const restoreTerminalDock = useUIStore((s) => s.restoreTerminalDock)
   const setDockActiveCharacter = useUIStore((s) => s.setDockActiveCharacter)
@@ -116,15 +115,25 @@ export function TerminalDock(): ReactElement | null {
     }
   }, [dock.visible, initialized, dock.position.x, dock.size.width, dock.size.height, setDockPosition])
 
-  // ESC to close
+  // Listen for detach/attach sync from main process
+  const setDockDetached = useUIStore((s) => s.setDockDetached)
+  useEffect(() => {
+    const unsub = window.api.on(IPC_DOCK_EVENTS.TERMINAL_DOCK_SYNC, (payload: unknown) => {
+      const data = payload as { detached: boolean }
+      setDockDetached(data.detached)
+    })
+    return () => { unsub() }
+  }, [setDockDetached])
+
+  // ESC to minimize
   useEffect(() => {
     if (!dock.visible) return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') closeTerminalDock()
+      if (e.key === 'Escape') minimizeTerminalDock()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [dock.visible, closeTerminalDock])
+  }, [dock.visible, minimizeTerminalDock])
 
   // --- Drag ---
   const onDragStart = useCallback(
@@ -190,8 +199,8 @@ export function TerminalDock(): ReactElement | null {
 
   return (
     <>
-    {/* Minimized bar */}
-    {dock.visible && dock.minimized && (
+    {/* Minimized bar — only in attach mode */}
+    {!detachedMode && !dock.detached && dock.visible && dock.minimized && (
       <div
         className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-1 px-2 py-1.5 rounded-lg border border-border bg-background shadow-lg"
         onClick={restoreTerminalDock}
@@ -213,13 +222,16 @@ export function TerminalDock(): ReactElement | null {
     {/* Main dock */}
     <div
       ref={containerRef}
-      className="absolute z-[200] flex flex-col rounded-lg border border-border bg-background shadow-lg overflow-hidden"
-      style={{
+      className={detachedMode
+        ? 'flex flex-col h-full w-full bg-background overflow-hidden'
+        : 'absolute z-[200] flex flex-col rounded-lg border border-border bg-background shadow-lg overflow-hidden'
+      }
+      style={detachedMode ? {} : {
         left: dock.position.x,
         top: dock.position.y,
         width: dock.size.width,
         height: dock.size.height,
-        display: (!dock.visible || dock.minimized) ? 'none' : 'flex',
+        display: (!dock.visible || dock.minimized || dock.detached) ? 'none' : 'flex',
       }}
     >
       {/* Tab bar — draggable */}
@@ -253,19 +265,36 @@ export function TerminalDock(): ReactElement | null {
           })()}
         </div>
         <div className="flex items-center gap-0.5 px-1.5 shrink-0" data-no-drag>
+          {detachedMode ? (
+            <button
+              className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors text-[10px]"
+              onClick={() => window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_ATTACH)}
+              title="Attach to main window"
+            >
+              ⤓
+            </button>
+          ) : (
+            <button
+              className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors text-[10px]"
+              onClick={() => window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_DETACH, {
+                width: dock.size.width,
+                height: dock.size.height,
+                activeCharacterId: dock.activeCharacterId,
+              })}
+              title="Detach to separate window"
+            >
+              ⤴
+            </button>
+          )}
           <button
             className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors text-xs"
-            onClick={minimizeTerminalDock}
+            onClick={detachedMode
+              ? () => window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_MINIMIZE)
+              : minimizeTerminalDock
+            }
             title="Minimize"
           >
             ─
-          </button>
-          <button
-            className="w-6 h-6 flex items-center justify-center rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors text-xs"
-            onClick={closeTerminalDock}
-            title="Close"
-          >
-            ×
           </button>
         </div>
       </div>

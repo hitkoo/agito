@@ -31,7 +31,9 @@ export function GeneratePanel(): JSX.Element {
     setGenerating(true)
     setError(null)
     setResults([])
-    const batchCount = boost ? 20 : 4
+    const batchCount = category === 'background'
+      ? (boost ? 20 : 4)
+      : (boost ? 80 : 16)
     setStatusText(boost ? 'Generating ×5 boost...' : 'Generating...')
 
     try {
@@ -213,7 +215,7 @@ export function GeneratePanel(): JSX.Element {
             Generated images will appear here
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-4 gap-3">
             {results.map((item, idx) => (
               <div
                 key={idx}

@@ -54,6 +54,16 @@ export const IPC_COMMANDS = {
   // Settings
   SETTINGS_READ: 'settings:read',
   SETTINGS_WRITE: 'settings:write',
+  // Terminal dock detach/attach
+  TERMINAL_DOCK_DETACH: 'terminal-dock:detach',
+  TERMINAL_DOCK_ATTACH: 'terminal-dock:attach',
+  TERMINAL_DOCK_MINIMIZE: 'terminal-dock:minimize',
+  TERMINAL_DOCK_RESTORE: 'terminal-dock:restore',
+} as const
+
+// Terminal dock sync event (Main → Renderer)
+export const IPC_DOCK_EVENTS = {
+  TERMINAL_DOCK_SYNC: 'terminal-dock:sync',
 } as const
 
 export type IPCEvent = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS]
