@@ -13,7 +13,9 @@ import type {
   ItemManifest,
   GridPosition,
   ItemFootprint,
+  CropRect,
 } from '../../../shared/types'
+import { getEffectiveFootprint } from '../../../shared/types'
 import type { CharacterRuntimeState } from '../../../shared/character-runtime-state'
 import { getManifestById } from '../../../shared/item-manifests'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
@@ -514,14 +516,22 @@ function StatusBadge({
 // HoverBorder — subtle solid border for runtime hover feedback
 // ---------------------------------------------------------------------------
 
-function HoverBorder({ w, h }: { w: number; h: number }): ReactElement {
+function HoverBorder({ w, h, crop, cellSize }: { w: number; h: number; crop?: CropRect | null; cellSize?: number }): ReactElement {
   const draw = useCallback(
     (g: PixiGraphics) => {
       g.clear()
       g.lineStyle(1.5, 0xffffff, 0.35)
-      g.drawRoundedRect(-1, -1, w + 2, h + 2, 4)
+      if (crop && cellSize) {
+        const cx = crop.left * cellSize
+        const cy = crop.top * cellSize
+        const cw = w - (crop.left + crop.right) * cellSize
+        const ch = h - (crop.top + crop.bottom) * cellSize
+        g.drawRoundedRect(cx - 1, cy - 1, cw + 2, ch + 2, 4)
+      } else {
+        g.drawRoundedRect(-1, -1, w + 2, h + 2, 4)
+      }
     },
-    [w, h]
+    [w, h, crop, cellSize]
   )
 
   return <Graphics draw={draw} />
@@ -531,7 +541,7 @@ function HoverBorder({ w, h }: { w: number; h: number }): ReactElement {
 // SelectionBorder — dashed border around selected item
 // ---------------------------------------------------------------------------
 
-function SelectionBorder({ w, h }: { w: number; h: number }): ReactElement {
+function SelectionBorder({ w, h, crop, cellSize }: { w: number; h: number; crop?: CropRect | null; cellSize?: number }): ReactElement {
   const draw = useCallback(
     (g: PixiGraphics) => {
       g.clear()
@@ -540,28 +550,33 @@ function SelectionBorder({ w, h }: { w: number; h: number }): ReactElement {
       const lineW = 2
       g.lineStyle(lineW, 0xffffff, 0.9)
 
+      const bx = crop && cellSize ? crop.left * cellSize : 0
+      const by = crop && cellSize ? crop.top * cellSize : 0
+      const bw = crop && cellSize ? w - (crop.left + crop.right) * cellSize : w
+      const bh = crop && cellSize ? h - (crop.top + crop.bottom) * cellSize : h
+
       // Top edge
-      for (let x = 0; x < w; x += dashLen + gapLen) {
-        g.moveTo(x, 0)
-        g.lineTo(Math.min(x + dashLen, w), 0)
+      for (let x = 0; x < bw; x += dashLen + gapLen) {
+        g.moveTo(bx + x, by)
+        g.lineTo(bx + Math.min(x + dashLen, bw), by)
       }
       // Bottom edge
-      for (let x = 0; x < w; x += dashLen + gapLen) {
-        g.moveTo(x, h)
-        g.lineTo(Math.min(x + dashLen, w), h)
+      for (let x = 0; x < bw; x += dashLen + gapLen) {
+        g.moveTo(bx + x, by + bh)
+        g.lineTo(bx + Math.min(x + dashLen, bw), by + bh)
       }
       // Left edge
-      for (let y = 0; y < h; y += dashLen + gapLen) {
-        g.moveTo(0, y)
-        g.lineTo(0, Math.min(y + dashLen, h))
+      for (let y = 0; y < bh; y += dashLen + gapLen) {
+        g.moveTo(bx, by + y)
+        g.lineTo(bx, by + Math.min(y + dashLen, bh))
       }
       // Right edge
-      for (let y = 0; y < h; y += dashLen + gapLen) {
-        g.moveTo(w, y)
-        g.lineTo(w, Math.min(y + dashLen, h))
+      for (let y = 0; y < bh; y += dashLen + gapLen) {
+        g.moveTo(bx + bw, by + y)
+        g.lineTo(bx + bw, by + Math.min(y + dashLen, bh))
       }
     },
-    [w, h]
+    [w, h, crop, cellSize]
   )
 
   return <Graphics draw={draw} />
@@ -598,14 +613,20 @@ function ResizeHandle({
       g.beginFill(0x3a3a3a, 0.9)
       g.drawRoundedRect(0, 0, handleSize, handleSize, 4)
       g.endFill()
-      // Diagonal resize lines (↘ pattern)
+      // Resize icon — rendered via Pixi (lucide not available in canvas)
+      // Top-left arrow
       g.lineStyle(1.5, 0xcccccc, 0.9)
-      g.moveTo(6, handleSize - 4)
-      g.lineTo(handleSize - 4, 6)
-      g.moveTo(10, handleSize - 4)
-      g.lineTo(handleSize - 4, 10)
-      g.moveTo(14, handleSize - 4)
-      g.lineTo(handleSize - 4, 14)
+      g.moveTo(4, 9)
+      g.lineTo(4, 4)
+      g.lineTo(9, 4)
+      g.moveTo(4, 4)
+      g.lineTo(8, 8)
+      // Bottom-right arrow
+      g.moveTo(14, 9)
+      g.lineTo(14, 14)
+      g.lineTo(9, 14)
+      g.moveTo(14, 14)
+      g.lineTo(10, 10)
     },
     []
   )
@@ -653,56 +674,52 @@ function ResizeHandle({
 }
 
 // ---------------------------------------------------------------------------
-// ZOrderControls — up/down buttons for manual z-index adjustment
+// SelectionControls — 2×2 grid of buttons at top-right of selected item
+// [ChevronUp] [Crop]
+// [ChevronDown] [Menu]
 // ---------------------------------------------------------------------------
 
-function ZOrderControls({
+function SelectionControls({
   parentW,
-  parentH,
-  onUp,
-  onDown,
+  onZUp,
+  onZDown,
+  onCropToggle,
+  onMenu,
+  isCropping,
 }: {
   parentW: number
   parentH: number
-  onUp: () => void
-  onDown: () => void
+  onZUp: () => void
+  onZDown: () => void
+  onCropToggle: () => void
+  onMenu: (x: number, y: number) => void
+  isCropping: boolean
 }): ReactElement {
-  const btnW = 24
-  const btnH = 22
+  const btnSize = 18
   const gap = 2
-  const totalH = btnH * 2 + gap
-  const xPos = parentW
-  const yPos = (parentH - totalH) / 2
-
-  // Invisible hit area covering the gap between item and buttons to prevent hover loss
-  const drawHitArea = useCallback(
-    (g: PixiGraphics) => {
-      g.clear()
-      g.beginFill(0x000000, 0.001)
-      g.drawRect(-8, -4, btnW + 12, totalH + 8)
-      g.endFill()
-    },
-    [totalH]
-  )
+  const xPos = parentW + 4
+  const yPos = -4
 
   const drawBtn = useCallback(
-    (g: PixiGraphics) => {
+    (g: PixiGraphics, highlighted = false) => {
       g.clear()
-      g.beginFill(0x4a4a4a, 0.9)
-      g.drawRoundedRect(0, 0, btnW, btnH, 6)
+      g.beginFill(highlighted ? 0x2255cc : 0x4a4a4a, 0.9)
+      g.drawRoundedRect(0, 0, btnSize, btnSize, 4)
       g.endFill()
     },
     []
   )
 
+  const drawBtnNormal = useCallback((g: PixiGraphics) => drawBtn(g, false), [drawBtn])
+  const drawBtnHighlight = useCallback((g: PixiGraphics) => drawBtn(g, true), [drawBtn])
+
   const drawChevronUp = useCallback(
     (g: PixiGraphics) => {
       g.clear()
-      g.lineStyle(2.5, 0xffffff, 0.9)
-      // ^ chevron shape
-      g.moveTo(7, 14)
-      g.lineTo(12, 8)
-      g.lineTo(17, 14)
+      g.lineStyle(2, 0xffffff, 0.9)
+      g.moveTo(4, 12)
+      g.lineTo(9, 6)
+      g.lineTo(14, 12)
     },
     []
   )
@@ -710,42 +727,243 @@ function ZOrderControls({
   const drawChevronDown = useCallback(
     (g: PixiGraphics) => {
       g.clear()
-      g.lineStyle(2.5, 0xffffff, 0.9)
-      // v chevron shape
-      g.moveTo(7, 8)
-      g.lineTo(12, 14)
-      g.lineTo(17, 8)
+      g.lineStyle(2, 0xffffff, 0.9)
+      g.moveTo(4, 6)
+      g.lineTo(9, 12)
+      g.lineTo(14, 6)
     },
     []
   )
 
-  const onUpDown = useCallback(
-    (e: import('pixi.js').FederatedPointerEvent) => {
-      e.stopPropagation()
-      onUp()
+  // Crop icon: rectangle with dashed inner rect
+  const drawCropIcon = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.lineStyle(1.5, 0xffffff, 0.9)
+      g.drawRect(3, 3, 12, 12)
+      g.lineStyle(1, 0xffffff, 0.5)
+      g.drawRect(6, 6, 6, 6)
     },
-    [onUp]
+    []
   )
 
-  const onDownDown = useCallback(
+  // Menu icon: three horizontal dots
+  const drawMenuIcon = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(0xffffff, 0.9)
+      g.drawCircle(5, 9, 1.5)
+      g.drawCircle(9, 9, 1.5)
+      g.drawCircle(13, 9, 1.5)
+      g.endFill()
+    },
+    []
+  )
+
+  const onZUpDown = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => { e.stopPropagation(); onZUp() },
+    [onZUp]
+  )
+
+  const onZDownDown = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => { e.stopPropagation(); onZDown() },
+    [onZDown]
+  )
+
+  const onCropDown = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => { e.stopPropagation(); onCropToggle() },
+    [onCropToggle]
+  )
+
+  const onMenuDown = useCallback(
     (e: import('pixi.js').FederatedPointerEvent) => {
       e.stopPropagation()
-      onDown()
+      const native = e.nativeEvent as MouseEvent
+      onMenu(native.clientX, native.clientY)
     },
-    [onDown]
+    [onMenu]
   )
+
+  const row2Y = btnSize + gap
 
   return (
     <Container x={xPos} y={yPos} interactive>
-      <Graphics draw={drawHitArea} />
-      <Container interactive cursor="pointer" pointerdown={onUpDown}>
-        <Graphics draw={drawBtn} />
+      {/* Top-left: chevron up */}
+      <Container interactive cursor="pointer" pointerdown={onZUpDown}>
+        <Graphics draw={drawBtnNormal} />
         <Graphics draw={drawChevronUp} />
       </Container>
-      <Container y={btnH + gap} interactive cursor="pointer" pointerdown={onDownDown}>
-        <Graphics draw={drawBtn} />
+      {/* Top-right: crop */}
+      <Container x={btnSize + gap} interactive cursor="pointer" pointerdown={onCropDown}>
+        <Graphics draw={isCropping ? drawBtnHighlight : drawBtnNormal} />
+        <Graphics draw={drawCropIcon} />
+      </Container>
+      {/* Bottom-left: chevron down */}
+      <Container y={row2Y} interactive cursor="pointer" pointerdown={onZDownDown}>
+        <Graphics draw={drawBtnNormal} />
         <Graphics draw={drawChevronDown} />
       </Container>
+      {/* Bottom-right: menu */}
+      <Container x={btnSize + gap} y={row2Y} interactive cursor="pointer" pointerdown={onMenuDown}>
+        <Graphics draw={drawBtnNormal} />
+        <Graphics draw={drawMenuIcon} />
+      </Container>
+    </Container>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// CropEditor — 4 draggable edge handles for adjusting crop
+// ---------------------------------------------------------------------------
+
+function CropEditor({
+  w,
+  h,
+  crop,
+  cellSize,
+  efpW,
+  efpH,
+  onCropChange,
+}: {
+  w: number
+  h: number
+  crop: CropRect
+  cellSize: number
+  efpW: number
+  efpH: number
+  onCropChange: (newCrop: CropRect) => void
+}): ReactElement {
+  const draggingEdge = useRef<'top' | 'bottom' | 'left' | 'right' | null>(null)
+  const cropStart = useRef<CropRect>(crop)
+  const dragStartGlobal = useRef({ x: 0, y: 0 })
+
+  const handleSize = 10
+
+  // Crop pixel bounds
+  const cx = crop.left * cellSize
+  const cy = crop.top * cellSize
+  const cw = w - (crop.left + crop.right) * cellSize
+  const ch = h - (crop.top + crop.bottom) * cellSize
+
+  const drawOverlay = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      // Dark overlay on cropped-away areas
+      g.beginFill(0x000000, 0.45)
+      if (crop.top > 0) g.drawRect(0, 0, w, crop.top * cellSize)
+      if (crop.bottom > 0) g.drawRect(0, h - crop.bottom * cellSize, w, crop.bottom * cellSize)
+      const midY = crop.top * cellSize
+      const midH = h - (crop.top + crop.bottom) * cellSize
+      if (crop.left > 0) g.drawRect(0, midY, crop.left * cellSize, midH)
+      if (crop.right > 0) g.drawRect(w - crop.right * cellSize, midY, crop.right * cellSize, midH)
+      g.endFill()
+      // Bright border around crop area
+      g.lineStyle(1.5, 0xffdd44, 0.9)
+      g.drawRect(cx, cy, cw, ch)
+    },
+    [crop, w, h, cellSize, cx, cy, cw, ch]
+  )
+
+  const drawHandle = useCallback(
+    (g: PixiGraphics) => {
+      g.clear()
+      g.beginFill(0xffdd44, 1)
+      g.drawRoundedRect(0, 0, handleSize, handleSize, 2)
+      g.endFill()
+    },
+    []
+  )
+
+  const makePointerDown = (edge: 'top' | 'bottom' | 'left' | 'right') =>
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      e.stopPropagation()
+      draggingEdge.current = edge
+      cropStart.current = { ...crop }
+      dragStartGlobal.current = { x: e.global.x, y: e.global.y }
+    }
+
+  const onGlobalMove = useCallback(
+    (e: import('pixi.js').FederatedPointerEvent) => {
+      if (!draggingEdge.current) return
+      const edge = draggingEdge.current
+      const start = cropStart.current
+      const dx = e.global.x - dragStartGlobal.current.x
+      const dy = e.global.y - dragStartGlobal.current.y
+
+      if (edge === 'top') {
+        const delta = Math.round(dy / cellSize)
+        const newTop = Math.max(0, Math.min(efpH - start.bottom - 1, start.top + delta))
+        onCropChange({ ...start, top: newTop })
+      } else if (edge === 'bottom') {
+        const delta = Math.round(dy / cellSize)
+        const newBottom = Math.max(0, Math.min(efpH - start.top - 1, start.bottom - delta))
+        onCropChange({ ...start, bottom: newBottom })
+      } else if (edge === 'left') {
+        const delta = Math.round(dx / cellSize)
+        const newLeft = Math.max(0, Math.min(efpW - start.right - 1, start.left + delta))
+        onCropChange({ ...start, left: newLeft })
+      } else if (edge === 'right') {
+        const delta = Math.round(dx / cellSize)
+        const newRight = Math.max(0, Math.min(efpW - start.left - 1, start.right - delta))
+        onCropChange({ ...start, right: newRight })
+      }
+    },
+    [cellSize, efpW, efpH, onCropChange]
+  )
+
+  const onGlobalUp = useCallback(() => {
+    draggingEdge.current = null
+  }, [])
+
+  // Handle midpoints
+  const topHandleX = cx + cw / 2 - handleSize / 2
+  const topHandleY = cy - handleSize / 2
+  const bottomHandleX = cx + cw / 2 - handleSize / 2
+  const bottomHandleY = cy + ch - handleSize / 2
+  const leftHandleX = cx - handleSize / 2
+  const leftHandleY = cy + ch / 2 - handleSize / 2
+  const rightHandleX = cx + cw - handleSize / 2
+  const rightHandleY = cy + ch / 2 - handleSize / 2
+
+  return (
+    <Container interactive onglobalpointermove={onGlobalMove} pointerup={onGlobalUp} pointerupoutside={onGlobalUp}>
+      <Graphics draw={drawOverlay} />
+      {/* Top handle */}
+      <Graphics
+        draw={drawHandle}
+        x={topHandleX}
+        y={topHandleY}
+        interactive
+        cursor="ns-resize"
+        pointerdown={makePointerDown('top')}
+      />
+      {/* Bottom handle */}
+      <Graphics
+        draw={drawHandle}
+        x={bottomHandleX}
+        y={bottomHandleY}
+        interactive
+        cursor="ns-resize"
+        pointerdown={makePointerDown('bottom')}
+      />
+      {/* Left handle */}
+      <Graphics
+        draw={drawHandle}
+        x={leftHandleX}
+        y={leftHandleY}
+        interactive
+        cursor="ew-resize"
+        pointerdown={makePointerDown('left')}
+      />
+      {/* Right handle */}
+      <Graphics
+        draw={drawHandle}
+        x={rightHandleX}
+        y={rightHandleY}
+        interactive
+        cursor="ew-resize"
+        pointerdown={makePointerDown('right')}
+      />
     </Container>
   )
 }
@@ -764,6 +982,8 @@ function FurnitureSprite({
   zIndex,
   activeTab,
   isSelected,
+  isCropping,
+  onCropToggle,
 }: {
   item: PlacedItem
   cellSize: number
@@ -771,9 +991,21 @@ function FurnitureSprite({
   zIndex?: number
   activeTab: AppTab
   isSelected: boolean
+  isCropping: boolean
+  onCropToggle: (id: string) => void
 }): ReactElement {
-  const w = item.footprint.w * cellSize
-  const h = item.footprint.h * cellSize
+  const rotation = item.rotation ?? 0
+  const flipX = item.flipX ?? false
+  const flipY = item.flipY ?? false
+  const crop = item.crop ?? null
+
+  const efp = getEffectiveFootprint(item.footprint, rotation)
+  const w = efp.w * cellSize
+  const h = efp.h * cellSize
+  // Sprite raw pixel dims (pre-rotation)
+  const sw = item.footprint.w * cellSize
+  const sh = item.footprint.h * cellSize
+
   const fillColor = manifest.category === 'furniture' ? FURNITURE_FILL : TILE_FILL
   const borderColor = manifest.category === 'furniture' ? 0x7a6a5a : 0x5a6a7a
   const isLayout = activeTab === 'layout'
@@ -800,18 +1032,46 @@ function FurnitureSprite({
     (g: PixiGraphics) => {
       g.clear()
       g.beginFill(fillColor, 1)
-      g.drawRect(0, 0, w, h)
+      g.drawRect(0, 0, sw, sh)
       g.endFill()
       g.lineStyle(2, borderColor, 1)
-      g.drawRect(0, 0, w, h)
+      g.drawRect(0, 0, sw, sh)
     },
-    [w, h, fillColor, borderColor]
+    [sw, sh, fillColor, borderColor]
+  )
+
+  // Rotation pivot so sprite stays at container top-left after rotation
+  const rotRad = (rotation * Math.PI) / 180
+  const spritePivot = useMemo(() => {
+    if (rotation === 90) return { x: 0, y: sh }
+    if (rotation === 180) return { x: sw, y: sh }
+    if (rotation === 270) return { x: sw, y: 0 }
+    return { x: 0, y: 0 }
+  }, [rotation, sw, sh])
+
+  // Flip anchor
+
+  // Crop overlay draw (layout mode)
+  const drawCropOverlay = useCallback(
+    (g: PixiGraphics) => {
+      if (!crop) return
+      g.clear()
+      g.beginFill(0x000000, 0.45)
+      if (crop.top > 0) g.drawRect(0, 0, w, crop.top * cellSize)
+      if (crop.bottom > 0) g.drawRect(0, h - crop.bottom * cellSize, w, crop.bottom * cellSize)
+      const midY = crop.top * cellSize
+      const midH = h - (crop.top + crop.bottom) * cellSize
+      if (crop.left > 0) g.drawRect(0, midY, crop.left * cellSize, midH)
+      if (crop.right > 0) g.drawRect(w - crop.right * cellSize, midY, crop.right * cellSize, midH)
+      g.endFill()
+    },
+    [crop, w, h, cellSize]
   )
 
   const onPointerDown = useCallback(
     (e: import('pixi.js').FederatedPointerEvent) => {
       if (!isLayout) return
-      if (e.button === 2) return // right-click handled separately
+      if (e.button === 2) return
       dragging.current = true
       hasMoved.current = false
       originalPos.current = { x: item.position.x, y: item.position.y }
@@ -837,12 +1097,12 @@ function FurnitureSprite({
       hasMoved.current = true
       const newPixelX = originalPos.current.x * cellSize + dx
       const newPixelY = originalPos.current.y * cellSize + dy
-      const gridX = Math.max(0, Math.min(gridCols - item.footprint.w, Math.round(newPixelX / cellSize)))
-      const gridY = Math.max(0, Math.min(gridRows - item.footprint.h, Math.round(newPixelY / cellSize)))
+      const gridX = Math.max(0, Math.min(gridCols - efp.w, Math.round(newPixelX / cellSize)))
+      const gridY = Math.max(0, Math.min(gridRows - efp.h, Math.round(newPixelY / cellSize)))
       containerRef.current.x = gridX * cellSize
       containerRef.current.y = gridY * cellSize
     },
-    [cellSize, item.footprint.w, item.footprint.h]
+    [cellSize, efp.w, efp.h]
   )
 
   const onPointerUp = useCallback(
@@ -884,6 +1144,48 @@ function FurnitureSprite({
     [item.id]
   )
 
+  const onCropChange = useCallback(
+    (newCrop: CropRect) => {
+      useRoomStore.getState().cropItem(item.id, newCrop)
+    },
+    [item.id]
+  )
+
+  // Crop mask — applied to sprite wrapper (hidden in runtime + layout when not selected)
+  const spriteWrapRef = useRef<PixiContainer | null>(null)
+  const cropMaskRef = useRef<PixiGraphics | null>(null)
+  const hasCrop = crop && (crop.top > 0 || crop.bottom > 0 || crop.left > 0 || crop.right > 0)
+  const shouldMask = hasCrop && !(isLayout && isSelected)
+  useEffect(() => {
+    const wrap = spriteWrapRef.current
+    if (!wrap || !shouldMask) {
+      if (cropMaskRef.current) {
+        if (wrap) wrap.mask = null
+        cropMaskRef.current.destroy()
+        cropMaskRef.current = null
+      }
+      return
+    }
+    // Apply crop mask
+    const g = new PixiGraphics()
+    g.beginFill(0xffffff)
+    g.drawRect(
+      crop!.left * cellSize,
+      crop!.top * cellSize,
+      (efp.w - crop!.left - crop!.right) * cellSize,
+      (efp.h - crop!.top - crop!.bottom) * cellSize
+    )
+    g.endFill()
+    wrap.addChild(g)
+    wrap.mask = g
+    cropMaskRef.current = g
+    return () => {
+      wrap.mask = null
+      g.destroy()
+      cropMaskRef.current = null
+    }
+  }, [shouldMask, crop?.top, crop?.bottom, crop?.left, crop?.right, cellSize, efp.w, efp.h])
+
   return (
     <Container
       ref={containerRef}
@@ -900,15 +1202,39 @@ function FurnitureSprite({
       pointerover={isLayout ? () => { if (!useUIStore.getState().isDraggingItem) setIsHovered(true) } : undefined}
       pointerout={isLayout ? () => { if (!isResizingFurn.current) setIsHovered(false) } : undefined}
     >
-      {texture ? (
-        <Sprite texture={texture} width={w} height={h} />
-      ) : (
-        <Graphics draw={draw} />
+      {/* Sprite wrapper — crop mask applied here only */}
+      <Container ref={spriteWrapRef}>
+        {texture ? (
+          <Container
+            scale={{ x: flipX ? -1 : 1, y: flipY ? -1 : 1 }}
+            x={flipX ? w : 0}
+            y={flipY ? h : 0}
+          >
+            <Container rotation={rotRad} pivot={spritePivot}>
+              <Sprite texture={texture} width={sw} height={sh} />
+            </Container>
+          </Container>
+        ) : (
+          <Container
+            scale={{ x: flipX ? -1 : 1, y: flipY ? -1 : 1 }}
+            x={flipX ? w : 0}
+            y={flipY ? h : 0}
+          >
+            <Container rotation={rotRad} pivot={spritePivot}>
+              <Graphics draw={draw} />
+            </Container>
+          </Container>
+        )}
+      </Container>
+      {/* Crop overlay in layout mode */}
+      {isLayout && isSelected && crop && !isCropping && (
+        <Graphics draw={drawCropOverlay} />
       )}
-      {/* No label for furniture/background on canvas */}
+      {/* Hover border (runtime) */}
+      {!isLayout && isHovered && <HoverBorder w={w} h={h} crop={crop} cellSize={cellSize} />}
       {showHandles && (
         <>
-          <SelectionBorder w={w} h={h} />
+          <SelectionBorder w={w} h={h} crop={crop} cellSize={cellSize} />
           <ResizeHandle
             parentW={w}
             parentH={h}
@@ -918,13 +1244,28 @@ function FurnitureSprite({
             onResize={onResizeFurniture}
             onDragStateChange={(d) => { isResizingFurn.current = d }}
           />
-          <ZOrderControls
+          <SelectionControls
             parentW={w}
             parentH={h}
-            onUp={() => useRoomStore.getState().updateItemZOrder(item.id, (item.zOrder ?? 0) + 1)}
-            onDown={() => useRoomStore.getState().updateItemZOrder(item.id, (item.zOrder ?? 0) - 1)}
+            onZUp={() => useRoomStore.getState().updateItemZOrder(item.id, (item.zOrder ?? 0) + 1)}
+            onZDown={() => useRoomStore.getState().updateItemZOrder(item.id, (item.zOrder ?? 0) - 1)}
+            onCropToggle={() => onCropToggle(item.id)}
+            onMenu={(x, y) => useUIStore.getState().openLayoutContextMenu('furniture', item.id, x, y)}
+            isCropping={isCropping}
           />
         </>
+      )}
+      {/* Crop editor handles */}
+      {isLayout && isCropping && isSelected && (
+        <CropEditor
+          w={w}
+          h={h}
+          crop={crop ?? { top: 0, bottom: 0, left: 0, right: 0 }}
+          cellSize={cellSize}
+          efpW={efp.w}
+          efpH={efp.h}
+          onCropChange={onCropChange}
+        />
       )}
     </Container>
   )
@@ -942,6 +1283,8 @@ function CharacterSprite({
   onRightClick,
   activeTab,
   isSelected,
+  isCropping,
+  onCropToggle,
 }: {
   character: Character & { gridPosition: GridPosition }
   runtimeState?: CharacterRuntimeState
@@ -950,12 +1293,24 @@ function CharacterSprite({
   onRightClick: (characterId: string, x: number, y: number) => void
   activeTab: AppTab
   isSelected: boolean
+  isCropping: boolean
+  onCropToggle: (id: string) => void
 }): ReactElement {
   const fp = character.footprint ?? { w: 2, h: 2 }
+  const rotation = character.rotation ?? 0
+  const flipX = character.flipX ?? false
+  const flipY = character.flipY ?? false
+  const crop = character.crop ?? null
+
+  const efp = getEffectiveFootprint(fp, rotation)
   const x = character.gridPosition.x * cellSize
   const y = character.gridPosition.y * cellSize
-  const w = fp.w * cellSize
-  const h = fp.h * cellSize
+  const w = efp.w * cellSize
+  const h = efp.h * cellSize
+  // Sprite raw pixel dims (pre-rotation)
+  const sw = fp.w * cellSize
+  const sh = fp.h * cellSize
+
   const isLayout = activeTab === 'layout'
   const [isHoveredChar, setIsHoveredChar] = useState(false)
   const isResizingChar = useRef(false)
@@ -1049,12 +1404,12 @@ function CharacterSprite({
       hasMoved.current = true
       const newPixelX = originalPos.current.x * cellSize + dx
       const newPixelY = originalPos.current.y * cellSize + dy
-      const gridX = Math.max(0, Math.min(gridCols - fp.w, Math.round(newPixelX / cellSize)))
-      const gridY = Math.max(0, Math.min(gridRows - fp.h, Math.round(newPixelY / cellSize)))
+      const gridX = Math.max(0, Math.min(gridCols - efp.w, Math.round(newPixelX / cellSize)))
+      const gridY = Math.max(0, Math.min(gridRows - efp.h, Math.round(newPixelY / cellSize)))
       containerRef.current.x = gridX * cellSize
       containerRef.current.y = gridY * cellSize
     },
-    [cellSize, fp.w, fp.h]
+    [cellSize, efp.w, efp.h]
   )
 
   const onPointerUp = useCallback(
@@ -1107,6 +1462,73 @@ function CharacterSprite({
     [character.id]
   )
 
+  const onCropChangeChar = useCallback(
+    (newCrop: CropRect) => {
+      window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, character.id, { crop: newCrop })
+    },
+    [character.id]
+  )
+
+  // Rotation + flip transform
+  const rotRad = (rotation * Math.PI) / 180
+  const spritePivot = useMemo(() => {
+    if (rotation === 90) return { x: 0, y: sh }
+    if (rotation === 180) return { x: sw, y: sh }
+    if (rotation === 270) return { x: sw, y: 0 }
+    return { x: 0, y: 0 }
+  }, [rotation, sw, sh])
+
+  // Crop overlay draw (layout mode)
+  const drawCropOverlay = useCallback(
+    (g: PixiGraphics) => {
+      if (!crop) return
+      g.clear()
+      g.beginFill(0x000000, 0.45)
+      if (crop.top > 0) g.drawRect(0, 0, w, crop.top * cellSize)
+      if (crop.bottom > 0) g.drawRect(0, h - crop.bottom * cellSize, w, crop.bottom * cellSize)
+      const midY = crop.top * cellSize
+      const midH = h - (crop.top + crop.bottom) * cellSize
+      if (crop.left > 0) g.drawRect(0, midY, crop.left * cellSize, midH)
+      if (crop.right > 0) g.drawRect(w - crop.right * cellSize, midY, crop.right * cellSize, midH)
+      g.endFill()
+    },
+    [crop, w, h, cellSize]
+  )
+
+  // Crop mask — applied to sprite wrapper only (hidden in runtime + layout when not selected)
+  const spriteWrapRef = useRef<PixiContainer | null>(null)
+  const cropMaskRef = useRef<PixiGraphics | null>(null)
+  const hasCrop = crop && (crop.top > 0 || crop.bottom > 0 || crop.left > 0 || crop.right > 0)
+  const shouldMask = hasCrop && !(isLayout && isSelected)
+  useEffect(() => {
+    const wrap = spriteWrapRef.current
+    if (!wrap || !shouldMask) {
+      if (cropMaskRef.current) {
+        if (wrap) wrap.mask = null
+        cropMaskRef.current.destroy()
+        cropMaskRef.current = null
+      }
+      return
+    }
+    const g = new PixiGraphics()
+    g.beginFill(0xffffff)
+    g.drawRect(
+      crop!.left * cellSize,
+      crop!.top * cellSize,
+      (efp.w - crop!.left - crop!.right) * cellSize,
+      (efp.h - crop!.top - crop!.bottom) * cellSize
+    )
+    g.endFill()
+    wrap.addChild(g)
+    wrap.mask = g
+    cropMaskRef.current = g
+    return () => {
+      wrap.mask = null
+      g.destroy()
+      cropMaskRef.current = null
+    }
+  }, [shouldMask, crop?.top, crop?.bottom, crop?.left, crop?.right, cellSize, efp.w, efp.h])
+
   return (
     <Container
       ref={containerRef}
@@ -1123,15 +1545,29 @@ function CharacterSprite({
       pointerover={() => { if (!useUIStore.getState().isDraggingItem) setIsHoveredChar(true) }}
       pointerout={() => { if (!isResizingChar.current) setIsHoveredChar(false) }}
     >
-      {texture ? (
-        <>
-          <Sprite texture={texture} width={w} height={h} />
-          <StatusBadge status={character.status} w={w} runtimeState={runtimeState} />
-        </>
-      ) : (
-        statusEffect
+      <Container ref={spriteWrapRef}>
+        {texture ? (
+          <>
+            <Container
+              scale={{ x: flipX ? -1 : 1, y: flipY ? -1 : 1 }}
+              x={flipX ? w : 0}
+              y={flipY ? h : 0}
+            >
+              <Container rotation={rotRad} pivot={spritePivot}>
+                <Sprite texture={texture} width={sw} height={sh} />
+              </Container>
+            </Container>
+            <StatusBadge status={character.status} w={w} runtimeState={runtimeState} />
+          </>
+        ) : (
+          statusEffect
+        )}
+      </Container>
+      {/* Crop overlay in layout mode */}
+      {isLayout && isSelected && crop && !isCropping && (
+        <Graphics draw={drawCropOverlay} />
       )}
-      {!isLayout && isHoveredChar && <HoverBorder w={w} h={h} />}
+      {!isLayout && isHoveredChar && <HoverBorder w={w} h={h} crop={crop} cellSize={cellSize} />}
       <Text
         text={character.name}
         x={w / 2}
@@ -1141,7 +1577,7 @@ function CharacterSprite({
       />
       {showHandlesChar && (
         <>
-          <SelectionBorder w={w} h={h} />
+          <SelectionBorder w={w} h={h} crop={crop} cellSize={cellSize} />
           <ResizeHandle
             parentW={w}
             parentH={h}
@@ -1151,13 +1587,28 @@ function CharacterSprite({
             onResize={onResizeCharacter}
             onDragStateChange={(d) => { isResizingChar.current = d }}
           />
-          <ZOrderControls
+          <SelectionControls
             parentW={w}
             parentH={h}
-            onUp={() => window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, character.id, { zOrder: (character.zOrder ?? 0) + 1 })}
-            onDown={() => window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, character.id, { zOrder: (character.zOrder ?? 0) - 1 })}
+            onZUp={() => window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, character.id, { zOrder: (character.zOrder ?? 0) + 1 })}
+            onZDown={() => window.api.invoke(IPC_COMMANDS.CHARACTER_UPDATE, character.id, { zOrder: (character.zOrder ?? 0) - 1 })}
+            onCropToggle={() => onCropToggle(character.id)}
+            onMenu={(mx, my) => useUIStore.getState().openLayoutContextMenu('character', character.id, mx, my)}
+            isCropping={isCropping}
           />
         </>
+      )}
+      {/* Crop editor handles */}
+      {isLayout && isCropping && isSelected && (
+        <CropEditor
+          w={w}
+          h={h}
+          crop={crop ?? { top: 0, bottom: 0, left: 0, right: 0 }}
+          cellSize={cellSize}
+          efpW={efp.w}
+          efpH={efp.h}
+          onCropChange={onCropChangeChar}
+        />
       )}
     </Container>
   )
@@ -1188,10 +1639,18 @@ export function OfficeCanvas(): ReactElement {
   const selectLayoutItem = useUIStore((s) => s.selectLayoutItem)
   const items = useRoomStore((s) => s.layout.items)
 
-  // ESC to deselect / close context menu, Ctrl+C / Ctrl+V copy-paste
+  // Track which item is in crop editing mode
+  const [croppingItemId, setCroppingItemId] = useState<string | null>(null)
+
+  const handleCropToggle = useCallback((id: string) => {
+    setCroppingItemId((prev) => (prev === id ? null : id))
+  }, [])
+
+  // ESC to deselect / close context menu / exit crop mode, Ctrl+C / Ctrl+V copy-paste
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
+        setCroppingItemId(null)
         useUIStore.getState().selectLayoutItem(null)
         useUIStore.getState().closeLayoutContextMenu()
       }
@@ -1289,6 +1748,7 @@ export function OfficeCanvas(): ReactElement {
 
   // Deselect when clicking empty canvas area
   const onCanvasPointerDown = useCallback(() => {
+    setCroppingItemId(null)
     selectLayoutItem(null)
   }, [selectLayoutItem])
 
@@ -1316,6 +1776,8 @@ export function OfficeCanvas(): ReactElement {
               manifest={manifest}
               activeTab={activeTab}
               isSelected={selectedLayoutItem?.type === 'furniture' && selectedLayoutItem.id === item.id}
+              isCropping={croppingItemId === item.id}
+              onCropToggle={handleCropToggle}
             />
           ))}
         </Container>
@@ -1331,6 +1793,8 @@ export function OfficeCanvas(): ReactElement {
               zIndex={item.position.y * cellSize + (item.zOrder ?? 0) * 100}
               activeTab={activeTab}
               isSelected={selectedLayoutItem?.type === 'furniture' && selectedLayoutItem.id === item.id}
+              isCropping={croppingItemId === item.id}
+              onCropToggle={handleCropToggle}
             />
           ))}
           {characters.filter((c): c is Character & { gridPosition: GridPosition } => c.gridPosition !== null).map((char) => (
@@ -1343,6 +1807,8 @@ export function OfficeCanvas(): ReactElement {
               onRightClick={openContextMenu}
               activeTab={activeTab}
               isSelected={selectedLayoutItem?.type === 'character' && selectedLayoutItem.id === char.id}
+              isCropping={croppingItemId === char.id}
+              onCropToggle={handleCropToggle}
             />
           ))}
         </Container>

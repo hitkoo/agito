@@ -35,9 +35,20 @@ export interface Character {
   stats: CharacterStats
   footprint?: ItemFootprint // defaults to FOOTPRINTS.character (2×2) if not set
   zOrder?: number
+  rotation?: 0 | 90 | 180 | 270
+  flipX?: boolean
+  flipY?: boolean
+  crop?: CropRect | null
 }
 
 // --- Room ---
+
+export interface CropRect {
+  top: number
+  bottom: number
+  left: number
+  right: number
+}
 
 export type PlacementZone = 'floor' | 'wall'
 
@@ -46,6 +57,10 @@ export type ItemCategory = 'background' | 'furniture'
 export interface ItemFootprint {
   w: number
   h: number
+}
+
+export function getEffectiveFootprint(fp: ItemFootprint, rotation?: number): ItemFootprint {
+  return (rotation === 90 || rotation === 270) ? { w: fp.h, h: fp.w } : fp
 }
 
 export interface ItemManifest {
@@ -65,6 +80,10 @@ export interface PlacedItem {
   position: GridPosition
   footprint: ItemFootprint
   zOrder?: number
+  rotation?: 0 | 90 | 180 | 270
+  flipX?: boolean
+  flipY?: boolean
+  crop?: CropRect | null
 }
 
 export interface RoomLayout {

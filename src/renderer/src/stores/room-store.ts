@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { RoomLayout, PlacedItem, GridPosition, AgitoPersistentData, ItemFootprint } from '../../../shared/types'
+import type { RoomLayout, PlacedItem, GridPosition, AgitoPersistentData, ItemFootprint, CropRect } from '../../../shared/types'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import { GRID_COLS, GRID_ROWS, MIN_GRID_COLS, MIN_GRID_ROWS, MAX_GRID_COLS, MAX_GRID_ROWS } from '../../../shared/constants'
 
@@ -33,6 +33,9 @@ interface RoomStore {
   resizeItem: (itemId: string, newFootprint: ItemFootprint) => void
   updateItemZOrder: (itemId: string, zOrder: number) => void
   findEmptyPosition: (width: number, height: number) => GridPosition | null
+  rotateItem: (itemId: string, degrees: 90 | -90) => void
+  flipItem: (itemId: string, axis: 'x' | 'y') => void
+  cropItem: (itemId: string, crop: CropRect | null) => void
 }
 
 export const useRoomStore = create<RoomStore>((set, get) => ({
@@ -128,5 +131,42 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
       }
     }
     return null
+  },
+
+  rotateItem: (itemId, degrees) => {
+    const updated = {
+      ...get().layout,
+      items: get().layout.items.map((i) => {
+        if (i.id !== itemId) return i
+        const current = i.rotation ?? 0
+        const next = ((current + degrees) % 360 + 360) % 360 as 0 | 90 | 180 | 270
+        return { ...i, rotation: next }
+      }),
+    }
+    set({ layout: updated, occupiedCells: buildOccupiedSet(updated.items) })
+    window.api.invoke(IPC_COMMANDS.STORE_WRITE, 'roomLayout', updated)
+  },
+
+  flipItem: (itemId, axis) => {
+    const updated = {
+      ...get().layout,
+      items: get().layout.items.map((i) => {
+        if (i.id !== itemId) return i
+        return axis === 'x' ? { ...i, flipX: !i.flipX } : { ...i, flipY: !i.flipY }
+      }),
+    }
+    set({ layout: updated, occupiedCells: buildOccupiedSet(updated.items) })
+    window.api.invoke(IPC_COMMANDS.STORE_WRITE, 'roomLayout', updated)
+  },
+
+  cropItem: (itemId, crop) => {
+    const updated = {
+      ...get().layout,
+      items: get().layout.items.map((i) =>
+        i.id === itemId ? { ...i, crop } : i
+      ),
+    }
+    set({ layout: updated, occupiedCells: buildOccupiedSet(updated.items) })
+    window.api.invoke(IPC_COMMANDS.STORE_WRITE, 'roomLayout', updated)
   },
 }))
