@@ -14,18 +14,31 @@ import { codexAdapter } from './engine/codex'
 
 // 16ms PTY output batching (~60fps) to prevent xterm.js write() flooding
 const PTY_BATCH_MS = 16
-const pendingPtyData = new Map<string, string[]>()
+const pendingPtyData = new Map<string, { chunks: string[]; version: number }>()
 const ptyFlushTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-function batchPtyData(characterId: string, data: string, broadcast: (event: string, payload: unknown) => void): void {
-  if (!pendingPtyData.has(characterId)) pendingPtyData.set(characterId, [])
-  pendingPtyData.get(characterId)!.push(data)
+function batchPtyData(
+  characterId: string,
+  data: string,
+  version: number,
+  broadcast: (event: string, payload: unknown) => void
+): void {
+  if (!pendingPtyData.has(characterId)) {
+    pendingPtyData.set(characterId, { chunks: [], version })
+  }
+  const pending = pendingPtyData.get(characterId)!
+  pending.chunks.push(data)
+  pending.version = version
 
   if (!ptyFlushTimers.has(characterId)) {
     ptyFlushTimers.set(characterId, setTimeout(() => {
-      const chunks = pendingPtyData.get(characterId) ?? []
-      const merged = chunks.join('')
-      broadcast(IPC_EVENTS.PTY_DATA, { characterId, data: merged })
+      const pendingEntry = pendingPtyData.get(characterId)
+      const merged = pendingEntry?.chunks.join('') ?? ''
+      broadcast(IPC_EVENTS.PTY_DATA, {
+        characterId,
+        data: merged,
+        version: pendingEntry?.version ?? version,
+      })
       pendingPtyData.delete(characterId)
       ptyFlushTimers.delete(characterId)
     }, PTY_BATCH_MS))
@@ -37,9 +50,13 @@ function flushPtyData(characterId: string, broadcast: (event: string, payload: u
   if (timer) clearTimeout(timer)
   ptyFlushTimers.delete(characterId)
 
-  const chunks = pendingPtyData.get(characterId)
-  if (chunks && chunks.length > 0) {
-    broadcast(IPC_EVENTS.PTY_DATA, { characterId, data: chunks.join('') })
+  const pendingEntry = pendingPtyData.get(characterId)
+  if (pendingEntry && pendingEntry.chunks.length > 0) {
+    broadcast(IPC_EVENTS.PTY_DATA, {
+      characterId,
+      data: pendingEntry.chunks.join(''),
+      version: pendingEntry.version,
+    })
   }
   pendingPtyData.delete(characterId)
 }
@@ -76,7 +93,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const pty = ptyPool.spawn(characterId, args.command, args.args, args.cwd)
 
       pty.onData((data) => {
-        batchPtyData(characterId, data, broadcastToAll)
+        batchPtyData(characterId, data, ptyPool.getOutputVersion(characterId), broadcastToAll)
         statusDetector.feedData(characterId, data)
       })
 
@@ -114,9 +131,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
   })
 
   ipcMain.handle(IPC_COMMANDS.PTY_GET_BUFFER, (_, characterId: string) => {
-    // Flush pending 16ms batch so buffer is complete and no duplicate data is sent
-    flushPtyData(characterId, broadcastToAll)
-    return ptyPool.getOutputBuffer(characterId)
+    return ptyPool.getOutputSnapshot(characterId)
   })
 
   // --- Character CRUD ---
@@ -203,7 +218,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const pty = ptyPool.spawn(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
 
       pty.onData((data) => {
-        batchPtyData(characterId, data, broadcastToAll)
+        batchPtyData(characterId, data, ptyPool.getOutputVersion(characterId), broadcastToAll)
         statusDetector.feedData(characterId, data)
       })
 
@@ -288,7 +303,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
       const pty = ptyPool.spawn(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
 
       pty.onData((data) => {
-        batchPtyData(characterId, data, broadcastToAll)
+        batchPtyData(characterId, data, ptyPool.getOutputVersion(characterId), broadcastToAll)
         statusDetector.feedData(characterId, data)
       })
 

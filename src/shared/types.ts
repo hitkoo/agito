@@ -106,6 +106,14 @@ export interface AgitoSettings {
   defaultSpriteSize: number
 }
 
+// --- Terminal Dock ---
+
+export interface TerminalDockSyncState {
+  detached: boolean
+  minimized: boolean
+  activeCharacterId: string | null
+}
+
 // --- Asset Management ---
 
 export type AssetSource = 'builtin' | 'custom'

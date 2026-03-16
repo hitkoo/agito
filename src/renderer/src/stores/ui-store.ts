@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { TerminalDockSyncState } from '../../../shared/types'
 
 export type AppTab = 'runtime' | 'layout' | 'generate' | 'characters' | 'settings'
 export type ThemeMode = 'system' | 'light' | 'dark'
@@ -74,10 +75,12 @@ interface UIStore {
   closeTerminalDock: () => void
   minimizeTerminalDock: () => void
   restoreTerminalDock: () => void
-  setDockActiveCharacter: (characterId: string) => void
+  setDockActiveCharacter: (characterId: string | null) => void
   setDockPosition: (position: { x: number; y: number }) => void
   setDockSize: (size: { width: number; height: number }) => void
   setDockDetached: (detached: boolean) => void
+  setDockMinimized: (minimized: boolean) => void
+  syncTerminalDock: (state: TerminalDockSyncState) => void
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -150,5 +153,18 @@ export const useUIStore = create<UIStore>((set) => ({
   setDockDetached: (detached) =>
     set((s) => ({
       terminalDock: { ...s.terminalDock, detached },
+    })),
+  setDockMinimized: (minimized) =>
+    set((s) => ({
+      terminalDock: { ...s.terminalDock, minimized },
+    })),
+  syncTerminalDock: (state) =>
+    set((s) => ({
+      terminalDock: {
+        ...s.terminalDock,
+        detached: state.detached,
+        minimized: state.minimized,
+        activeCharacterId: state.activeCharacterId,
+      },
     })),
 }))

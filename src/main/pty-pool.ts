@@ -6,12 +6,13 @@ interface PtyProcess {
   process: pty.IPty
   characterId: string
   outputBuffer: string
+  outputVersion: number
 }
 
 export class PtyPool {
   private processes = new Map<string, PtyProcess>()
   // Preserve output buffer after PTY exits (for error log display)
-  private deadBuffers = new Map<string, string>()
+  private deadBuffers = new Map<string, { buffer: string; version: number }>()
 
   spawn(
     characterId: string,
@@ -33,11 +34,12 @@ export class PtyPool {
       env: process.env as Record<string, string>,
     })
 
-    const entry: PtyProcess = { process: proc, characterId, outputBuffer: '' }
+    const entry: PtyProcess = { process: proc, characterId, outputBuffer: '', outputVersion: 0 }
     this.processes.set(characterId, entry)
 
     proc.onData((data) => {
       entry.outputBuffer += data
+      entry.outputVersion += 1
       if (entry.outputBuffer.length > OUTPUT_BUFFER_MAX) {
         entry.outputBuffer = entry.outputBuffer.slice(-OUTPUT_BUFFER_MAX)
       }
@@ -45,7 +47,7 @@ export class PtyPool {
 
     proc.onExit(() => {
       // Preserve buffer for error log before removing
-      this.deadBuffers.set(characterId, entry.outputBuffer)
+      this.deadBuffers.set(characterId, { buffer: entry.outputBuffer, version: entry.outputVersion })
       this.processes.delete(characterId)
     })
 
@@ -55,8 +57,22 @@ export class PtyPool {
   getOutputBuffer(characterId: string): string {
     // Check live processes first, then dead buffers
     return this.processes.get(characterId)?.outputBuffer
-      ?? this.deadBuffers.get(characterId)
+      ?? this.deadBuffers.get(characterId)?.buffer
       ?? ''
+  }
+
+  getOutputSnapshot(characterId: string): { buffer: string; version: number } {
+    const live = this.processes.get(characterId)
+    if (live) {
+      return { buffer: live.outputBuffer, version: live.outputVersion }
+    }
+
+    const dead = this.deadBuffers.get(characterId)
+    if (dead) {
+      return dead
+    }
+
+    return { buffer: '', version: 0 }
   }
 
   write(characterId: string, data: string): void {
@@ -87,5 +103,11 @@ export class PtyPool {
 
   clearDeadBuffer(characterId: string): void {
     this.deadBuffers.delete(characterId)
+  }
+
+  getOutputVersion(characterId: string): number {
+    return this.processes.get(characterId)?.outputVersion
+      ?? this.deadBuffers.get(characterId)?.version
+      ?? 0
   }
 }

@@ -59,6 +59,9 @@ export const IPC_COMMANDS = {
   TERMINAL_DOCK_ATTACH: 'terminal-dock:attach',
   TERMINAL_DOCK_MINIMIZE: 'terminal-dock:minimize',
   TERMINAL_DOCK_RESTORE: 'terminal-dock:restore',
+  TERMINAL_DOCK_GET_STATE: 'terminal-dock:get-state',
+  TERMINAL_DOCK_SET_ACTIVE_CHARACTER: 'terminal-dock:set-active-character',
+  TERMINAL_DOCK_READY: 'terminal-dock:ready',
 } as const
 
 // Terminal dock sync event (Main → Renderer)

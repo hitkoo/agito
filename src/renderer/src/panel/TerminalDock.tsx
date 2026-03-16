@@ -1,8 +1,12 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
 import { useCharacterStore } from '../stores/character-store'
 import { useUIStore } from '../stores/ui-store'
-import { IPC_COMMANDS, IPC_DOCK_EVENTS } from '../../../shared/ipc-channels'
+import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import type { Character, ScannedSession } from '../../../shared/types'
+import {
+  getTerminalDockRenderMode,
+  shouldAutoResumeTerminal,
+} from '../../../shared/terminal-dock-state'
 import { TerminalView } from './TerminalView'
 import { toast } from 'sonner'
 
@@ -66,6 +70,12 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
   const activeCharHasSession = assignedChars.some((c) => c.id === dock.activeCharacterId)
   const activeCharPtyAlive = alivePtys.has(dock.activeCharacterId ?? '')
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
+  const renderMode = getTerminalDockRenderMode({
+    detachedMode,
+    detached: dock.detached,
+    visible: dock.visible,
+    minimized: dock.minimized,
+  })
 
   // Only show tabs for characters with alive PTYs + the currently active character
   const visibleChars = assignedChars.filter((c) => alivePtys.has(c.id) || c.id === dock.activeCharacterId)
@@ -73,13 +83,19 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
   // Auto-resume: when active character has session but PTY is dead, resume automatically
   const [resumingChars, setResumingChars] = useState<Set<string>>(new Set())
   useEffect(() => {
-    if (!dock.activeCharacterId || !activeCharHasSession || activeCharPtyAlive) return
-    if (resumingChars.has(dock.activeCharacterId)) return // already resuming
+    if (!shouldAutoResumeTerminal({
+      renderMode,
+      activeCharacterId: dock.activeCharacterId,
+      hasAssignedSession: activeCharHasSession,
+      ptyAlive: activeCharPtyAlive,
+      isResuming: resumingChars.has(dock.activeCharacterId ?? ''),
+    })) return
 
     const char = characters.find((c) => c.id === dock.activeCharacterId)
     if (!char?.currentSessionId) return
 
     const charId = dock.activeCharacterId
+    if (!charId) return
     setResumingChars((prev) => new Set(prev).add(charId))
 
     ;(async () => {
@@ -100,7 +116,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         setResumingChars((prev) => { const next = new Set(prev); next.delete(charId); return next })
       }
     })()
-  }, [dock.activeCharacterId, activeCharHasSession, activeCharPtyAlive])
+  }, [renderMode, dock.activeCharacterId, activeCharHasSession, activeCharPtyAlive, characters, loadCharacters, resumingChars])
 
   // Auto-center on first open
   const [initialized, setInitialized] = useState(false)
@@ -115,25 +131,25 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
     }
   }, [dock.visible, initialized, dock.position.x, dock.size.width, dock.size.height, setDockPosition])
 
-  // Listen for detach/attach sync from main process
-  const setDockDetached = useUIStore((s) => s.setDockDetached)
-  useEffect(() => {
-    const unsub = window.api.on(IPC_DOCK_EVENTS.TERMINAL_DOCK_SYNC, (payload: unknown) => {
-      const data = payload as { detached: boolean }
-      setDockDetached(data.detached)
-    })
-    return () => { unsub() }
-  }, [setDockDetached])
-
   // ESC to minimize
   useEffect(() => {
-    if (!dock.visible) return
+    if (renderMode === 'hidden') return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') minimizeTerminalDock()
+      if (e.key !== 'Escape') return
+      if (detachedMode) {
+        void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_MINIMIZE)
+        return
+      }
+      minimizeTerminalDock()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [dock.visible, minimizeTerminalDock])
+  }, [detachedMode, minimizeTerminalDock, renderMode])
+
+  const handleTabSelect = useCallback((characterId: string) => {
+    setDockActiveCharacter(characterId)
+    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_SET_ACTIVE_CHARACTER, characterId)
+  }, [setDockActiveCharacter])
 
   // --- Drag ---
   const onDragStart = useCallback(
@@ -197,10 +213,13 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
     [dock.size, setDockSize]
   )
 
+  const activeCharacter = dock.activeCharacterId
+    ? characters.find((c) => c.id === dock.activeCharacterId) ?? null
+    : null
+
   return (
     <>
-    {/* Minimized bar — only in attach mode */}
-    {!detachedMode && !dock.detached && dock.visible && dock.minimized && (
+    {renderMode === 'attached-minimized-bar' && (
       <div
         className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-1 px-2 py-1.5 rounded-lg border border-border bg-background shadow-lg"
         onClick={restoreTerminalDock}
@@ -219,7 +238,42 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
       </div>
     )}
 
+    {renderMode === 'detached-minimized-bar' && (
+      <div
+        className="flex items-center justify-between h-full w-full px-3 border-b border-border bg-background/95 select-none"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      >
+        <button
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          onClick={() => window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_RESTORE)}
+        >
+          {activeCharacter ? `${activeCharacter.name} terminal` : 'Terminal'}
+        </button>
+        <div
+          className="flex items-center gap-1"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          <button
+            className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors text-[10px]"
+            onClick={() => window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_ATTACH)}
+            title="Attach to main window"
+          >
+            ⤓
+          </button>
+          <button
+            className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors text-xs"
+            onClick={() => window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_RESTORE)}
+            title="Restore"
+          >
+            □
+          </button>
+        </div>
+      </div>
+    )}
+
     {/* Main dock */}
+    {renderMode !== 'hidden' && renderMode !== 'attached-minimized-bar' && renderMode !== 'detached-minimized-bar' && (
     <div
       ref={containerRef}
       className={detachedMode
@@ -231,7 +285,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         top: dock.position.y,
         width: dock.size.width,
         height: dock.size.height,
-        display: (!dock.visible || dock.minimized || dock.detached) ? 'none' : 'flex',
+        display: 'flex',
       }}
     >
       {/* Tab bar — JS drag in attach mode, native window drag in detach mode */}
@@ -239,20 +293,25 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         className="flex items-center bg-muted/50 border-b border-border shrink-0 select-none"
         onMouseDown={detachedMode ? undefined : onDragStart}
         style={{
-          cursor: detachedMode ? 'default' : 'grab',
+          cursor: detachedMode ? 'grab' : 'grab',
           ...(detachedMode ? { WebkitAppRegion: 'drag' } as React.CSSProperties : {}),
         }}
       >
+        {detachedMode && (
+          <div className="px-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground/80 shrink-0">
+            Dock
+          </div>
+        )}
         <div
           className="flex-1 flex items-center gap-0.5 px-1 overflow-x-auto styled-scroll"
-          style={detachedMode ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}}
         >
           {visibleChars.map((c) => (
             <TabButton
               key={c.id}
               character={c}
               isActive={c.id === dock.activeCharacterId}
-              onClick={() => setDockActiveCharacter(c.id)}
+              detachedMode={detachedMode}
+              onClick={() => handleTabSelect(c.id)}
             />
           ))}
           {/* Show current character tab even if no active session */}
@@ -263,6 +322,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
                 key={char.id}
                 character={char}
                 isActive={true}
+                detachedMode={detachedMode}
                 onClick={() => {}}
               />
             ) : (
@@ -309,21 +369,11 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         </div>
       </div>
 
-      {/* Terminal or session assignment */}
-      {/* Terminal wrappers — one per character with alive PTY, toggle with display */}
-      {visibleChars.filter((c) => alivePtys.has(c.id)).map((c) => (
-        <div
-          key={c.id}
-          style={{
-            display: c.id === dock.activeCharacterId ? 'flex' : 'none',
-            flex: 1,
-            overflow: 'hidden',
-            minHeight: 0,
-          }}
-        >
-          <TerminalView characterId={c.id} isActive={c.id === dock.activeCharacterId} />
+      {dock.activeCharacterId && activeCharPtyAlive && (
+        <div className="flex-1 overflow-hidden min-h-0">
+          <TerminalView characterId={dock.activeCharacterId} isActiveOwner />
         </div>
-      ))}
+      )}
 
       {/* Resuming indicator when session assigned but PTY not yet alive */}
       {dock.activeCharacterId && activeCharHasSession && !activeCharPtyAlive && (
@@ -332,10 +382,16 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         </div>
       )}
 
+      {dock.activeCharacterId && !activeCharacter && (
+        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+          Loading terminal...
+        </div>
+      )}
+
       {/* Session assign view when no session assigned */}
-      {dock.activeCharacterId && !activeCharHasSession && (
+      {activeCharacter && !activeCharHasSession && (
         <SessionAssignView
-          character={characters.find((c) => c.id === dock.activeCharacterId)!}
+          character={activeCharacter}
           onSessionStarted={() => {}}
         />
       )}
@@ -358,6 +414,7 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         </svg>
       </div>
     </div>
+    )}
     </>
   )
 }
@@ -369,10 +426,12 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
 function TabButton({
   character,
   isActive,
+  detachedMode,
   onClick,
 }: {
   character: Character
   isActive: boolean
+  detachedMode: boolean
   onClick: () => void
 }): ReactElement {
   const [skinPreview, setSkinPreview] = useState<string | null>(null)
@@ -394,6 +453,7 @@ function TabButton({
       }`}
       onClick={onClick}
       data-no-drag
+      style={detachedMode ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}}
     >
       {skinPreview ? (
         <img

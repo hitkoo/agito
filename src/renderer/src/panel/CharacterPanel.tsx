@@ -151,7 +151,7 @@ export function CharacterPanel({ characterId }: CharacterPanelProps): ReactEleme
       </div>
 
       {/* Terminal */}
-      <TerminalView characterId={characterId} isActive={true} />
+      <TerminalView characterId={characterId} isActiveOwner />
     </div>
   )
 }

@@ -3,9 +3,25 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIPCHandlers } from './ipc'
 import { AgitoStore } from './store'
+import { IPC_COMMANDS, IPC_DOCK_EVENTS } from '../shared/ipc-channels'
+import type { TerminalDockSyncState } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 let detachedTerminalWindow: BrowserWindow | null = null
+
+function loadRenderer(window: BrowserWindow, mode?: 'terminal-dock'): void {
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    const base = process.env['ELECTRON_RENDERER_URL']
+    const url = mode ? `${base}${base.includes('?') ? '&' : '?'}mode=${mode}` : base
+    window.loadURL(url)
+  } else if (mode) {
+    window.loadFile(join(__dirname, '../renderer/index.html'), {
+      query: { mode },
+    })
+  } else {
+    window.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -32,11 +48,7 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+  loadRenderer(mainWindow)
 }
 
 app.whenReady().then(() => {
@@ -56,9 +68,46 @@ app.whenReady().then(() => {
   // --- Terminal Dock Detach/Attach ---
 
   let savedDockSize = { width: 720, height: 520 }
+  let dockSyncState: TerminalDockSyncState = {
+    detached: false,
+    minimized: false,
+    activeCharacterId: null,
+  }
 
-  ipcMain.handle('terminal-dock:detach', (_, state: { width?: number; height?: number; activeCharacterId?: string }) => {
+  const syncDockState = (targets = BrowserWindow.getAllWindows()): void => {
+    for (const win of targets) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_DOCK_EVENTS.TERMINAL_DOCK_SYNC, dockSyncState)
+      }
+    }
+  }
+
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_GET_STATE, () => dockSyncState)
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_READY, () => {
+    if (detachedTerminalWindow && !detachedTerminalWindow.isDestroyed()) {
+      detachedTerminalWindow.show()
+    }
+  })
+
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_SET_ACTIVE_CHARACTER, (_, activeCharacterId: string | null) => {
+    dockSyncState = { ...dockSyncState, activeCharacterId }
+    syncDockState()
+  })
+
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_DETACH, (_, state: { width?: number; height?: number; activeCharacterId?: string }) => {
     if (detachedTerminalWindow) {
+      const wasMinimized = dockSyncState.minimized
+      dockSyncState = {
+        ...dockSyncState,
+        detached: true,
+        minimized: false,
+        activeCharacterId: state.activeCharacterId ?? dockSyncState.activeCharacterId,
+      }
+      syncDockState([detachedTerminalWindow, ...BrowserWindow.getAllWindows().filter((win) => win !== detachedTerminalWindow)])
+      detachedTerminalWindow.setAlwaysOnTop(false)
+      if (wasMinimized) {
+        detachedTerminalWindow.setSize(savedDockSize.width, savedDockSize.height)
+      }
       detachedTerminalWindow.focus()
       return
     }
@@ -66,10 +115,17 @@ app.whenReady().then(() => {
     const width = state.width || 720
     const height = state.height || 520
     savedDockSize = { width, height }
+    dockSyncState = {
+      detached: true,
+      minimized: false,
+      activeCharacterId: state.activeCharacterId ?? dockSyncState.activeCharacterId,
+    }
+    syncDockState(BrowserWindow.getAllWindows())
 
     detachedTerminalWindow = new BrowserWindow({
       width,
       height,
+      show: false,
       alwaysOnTop: false,
       frame: false,
       transparent: false,
@@ -84,53 +140,44 @@ app.whenReady().then(() => {
       },
     })
 
-    // Load same renderer with query param to switch mode
-    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-      const base = process.env['ELECTRON_RENDERER_URL']
-      const sep = base.includes('?') ? '&' : '?'
-      detachedTerminalWindow.loadURL(`${base}${sep}mode=terminal-dock`)
-    } else {
-      detachedTerminalWindow.loadFile(join(__dirname, '../renderer/index.html'), {
-        query: { mode: 'terminal-dock' },
-      })
-    }
-
-    detachedTerminalWindow.on('closed', () => {
-      detachedTerminalWindow = null
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send('terminal-dock:sync', { detached: false })
+    detachedTerminalWindow.webContents.once('did-finish-load', () => {
+      if (detachedTerminalWindow && !detachedTerminalWindow.isDestroyed()) {
+        syncDockState([detachedTerminalWindow])
       }
     })
 
-    // Notify all windows
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('terminal-dock:sync', { detached: true, activeCharacterId: state.activeCharacterId })
-    }
+    loadRenderer(detachedTerminalWindow, 'terminal-dock')
+
+    detachedTerminalWindow.on('closed', () => {
+      detachedTerminalWindow = null
+      dockSyncState = { ...dockSyncState, detached: false, minimized: false }
+      syncDockState()
+    })
   })
 
-  ipcMain.handle('terminal-dock:attach', () => {
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_ATTACH, () => {
     if (detachedTerminalWindow) {
       detachedTerminalWindow.close()
-      detachedTerminalWindow = null
-    }
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('terminal-dock:sync', { detached: false })
     }
   })
 
   // PiP minimize/restore
-  ipcMain.handle('terminal-dock:minimize', () => {
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_MINIMIZE, () => {
     if (!detachedTerminalWindow) return
     const bounds = detachedTerminalWindow.getBounds()
     savedDockSize = { width: bounds.width, height: bounds.height }
     detachedTerminalWindow.setSize(320, 48)
     detachedTerminalWindow.setAlwaysOnTop(true, 'floating')
+    dockSyncState = { ...dockSyncState, minimized: true }
+    syncDockState()
   })
 
-  ipcMain.handle('terminal-dock:restore', () => {
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_RESTORE, () => {
     if (!detachedTerminalWindow) return
     detachedTerminalWindow.setSize(savedDockSize.width, savedDockSize.height)
     detachedTerminalWindow.setAlwaysOnTop(false)
+    dockSyncState = { ...dockSyncState, minimized: false }
+    syncDockState()
   })
 
   app.on('activate', () => {
