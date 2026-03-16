@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useIPCSync } from './hooks/useIPC'
+import { useTheme, getPersistedTheme } from './hooks/useTheme'
 import { useCharacterStore } from './stores/character-store'
 import { useUIStore } from './stores/ui-store'
 import { TerminalDock } from './panel/TerminalDock'
@@ -12,50 +13,41 @@ import { IPC_DOCK_EVENTS } from '../../shared/ipc-channels'
  */
 export function TerminalDockApp(): JSX.Element {
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
+  const characters = useCharacterStore((s) => s.characters)
   const setDockDetached = useUIStore((s) => s.setDockDetached)
   const openTerminalDock = useUIStore((s) => s.openTerminalDock)
+  const setTheme = useUIStore((s) => s.setTheme)
 
   useIPCSync()
+  useTheme()
 
-  // Load data and mark as detached mode
+  // Load data, apply theme, mark as detached mode
   useEffect(() => {
-    loadCharacters()
+    setTheme(getPersistedTheme())
     setDockDetached(true)
+    loadCharacters()
 
-    // Listen for sync events from main process
     const unsub = window.api.on(IPC_DOCK_EVENTS.TERMINAL_DOCK_SYNC, (payload: unknown) => {
       const data = payload as { detached?: boolean; activeCharacterId?: string }
       if (data.activeCharacterId) {
         openTerminalDock(data.activeCharacterId)
       }
     })
+    return () => { unsub() }
+  }, [loadCharacters, setDockDetached, openTerminalDock, setTheme])
 
-    return () => {
-      unsub()
-    }
-  }, [loadCharacters, setDockDetached, openTerminalDock])
-
-  // Force dock visible in detached mode
+  // Open dock for first assigned character once characters are loaded
   useEffect(() => {
     const dock = useUIStore.getState().terminalDock
-    if (!dock.visible) {
-      // Restore last active character or first assigned
-      const chars = useCharacterStore.getState().characters
-      const assigned = chars.find((c) => c.currentSessionId !== null)
-      if (assigned) {
-        openTerminalDock(assigned.id)
-      }
+    if (!dock.activeCharacterId || !dock.visible) {
+      const assigned = characters.find((c) => c.currentSessionId !== null)
+      if (assigned) openTerminalDock(assigned.id)
     }
-  }, [openTerminalDock])
+  }, [characters, openTerminalDock])
 
   return (
     <div className="flex flex-col h-full w-full bg-background text-foreground">
       <Toaster position="top-center" richColors theme="dark" />
-      {/* Custom title bar for frameless window */}
-      <div
-        className="h-1 shrink-0"
-        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-      />
       <div className="flex-1 relative overflow-hidden">
         <TerminalDock detachedMode />
       </div>

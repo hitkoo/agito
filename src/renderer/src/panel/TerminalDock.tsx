@@ -234,13 +234,19 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
         display: (!dock.visible || dock.minimized || dock.detached) ? 'none' : 'flex',
       }}
     >
-      {/* Tab bar — draggable */}
+      {/* Tab bar — JS drag in attach mode, native window drag in detach mode */}
       <div
         className="flex items-center bg-muted/50 border-b border-border shrink-0 select-none"
-        onMouseDown={onDragStart}
-        style={{ cursor: 'grab' }}
+        onMouseDown={detachedMode ? undefined : onDragStart}
+        style={{
+          cursor: detachedMode ? 'default' : 'grab',
+          ...(detachedMode ? { WebkitAppRegion: 'drag' } as React.CSSProperties : {}),
+        }}
       >
-        <div className="flex-1 flex items-center gap-0.5 px-1 overflow-x-auto styled-scroll">
+        <div
+          className="flex-1 flex items-center gap-0.5 px-1 overflow-x-auto styled-scroll"
+          style={detachedMode ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}}
+        >
           {visibleChars.map((c) => (
             <TabButton
               key={c.id}
@@ -264,7 +270,11 @@ export function TerminalDock({ detachedMode = false }: { detachedMode?: boolean 
             )
           })()}
         </div>
-        <div className="flex items-center gap-0.5 px-1.5 shrink-0" data-no-drag>
+        <div
+          className="flex items-center gap-0.5 px-1.5 shrink-0"
+          data-no-drag
+          style={detachedMode ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}}
+        >
           {detachedMode ? (
             <button
               className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors text-[10px]"
