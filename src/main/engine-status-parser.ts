@@ -24,6 +24,12 @@ interface ClaudeMessageBlock {
 interface ClaudeRecord {
   type?: string
   permissionMode?: string
+  data?: {
+    type?: string
+    hookEvent?: string
+  }
+  toolUseID?: string
+  parentToolUseID?: string
   message?: {
     role?: string
     stop_reason?: string | null
@@ -243,6 +249,18 @@ export function createClaudeSemanticParser(): SemanticParser {
         return
       }
 
+      if (record.type === 'progress') {
+        if (!state.needsInput) {
+          const progressToolUseId = record.toolUseID ?? record.parentToolUseID
+          const progressToolName =
+            (progressToolUseId ? activeTools.get(progressToolUseId) : null) ??
+            state.activeToolName ??
+            'tool'
+          startRunning(progressToolName)
+        }
+        return
+      }
+
       if (record.type === 'assistant') {
         const blocks = Array.isArray(record.message?.content) ? record.message.content : []
         const text = blocks
@@ -250,8 +268,11 @@ export function createClaudeSemanticParser(): SemanticParser {
           .map((block) => block.text ?? '')
           .join('\n')
           .trim()
+        const hasThinkingBlock = blocks.some((block) => block.type === 'thinking')
         if (text) {
           setPreview(text)
+          startRunning()
+        } else if (hasThinkingBlock && !state.needsInput) {
           startRunning()
         }
 

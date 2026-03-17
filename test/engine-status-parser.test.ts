@@ -178,6 +178,55 @@ describe('createClaudeSemanticParser', () => {
     })
   })
 
+  test('marks Claude thinking blocks as running before any text is emitted', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: null,
+          content: [
+            {
+              type: 'thinking',
+              thinking: 'Analyzing the request.',
+            },
+          ],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      activeToolName: null,
+      unreadDone: false,
+      needsInput: false,
+    })
+  })
+
+  test('marks Claude progress records as running even before assistant text is emitted', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'progress',
+        toolUseID: 'toolu_progress',
+        data: {
+          type: 'hook_progress',
+          hookEvent: 'PreToolUse',
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      activeToolName: 'tool',
+      unreadDone: false,
+      needsInput: false,
+    })
+  })
+
   test('treats errors as transient and clears them on later semantic activity', () => {
     const parser = createClaudeSemanticParser()
 
