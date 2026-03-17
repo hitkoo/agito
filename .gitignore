@@ -6,3 +6,7 @@ dist/
 .omc/
 .worktrees/
 *.tsbuildinfo
+
+
+.env.local
+.env
