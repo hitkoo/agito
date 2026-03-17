@@ -266,6 +266,15 @@ export function createClaudeSemanticParser(): SemanticParser {
             )
             continue
           }
+          if (block.name === 'ExitPlanMode') {
+            setPreview(null)
+            setNeedInput(
+              'plan_handoff',
+              buildNeedInputEvidence('claude-code', 'explicit', 'exit_plan_mode', block.id)
+            )
+            sawPlanArtifact = false
+            continue
+          }
           setPreview(null)
           startRunning(block.name ?? 'tool')
         }
@@ -308,6 +317,9 @@ export function createClaudeSemanticParser(): SemanticParser {
         const text = extractClaudeToolResultText(record, block)
 
         if (toolName === 'AskUserQuestion') {
+          clearNeedInput()
+        }
+        if (toolName === 'ExitPlanMode') {
           clearNeedInput()
         }
 

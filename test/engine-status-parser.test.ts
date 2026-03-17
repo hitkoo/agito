@@ -368,6 +368,56 @@ describe('createClaudeSemanticParser', () => {
       },
     })
   })
+
+  test('marks ExitPlanMode as an explicit Claude plan handoff anchor', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        permissionMode: 'plan',
+        message: {
+          role: 'user',
+          content: 'Proceed with the approved plan.',
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_exit_plan',
+              name: 'ExitPlanMode',
+              input: {
+                allowedPrompts: [{ tool: 'Bash', prompt: 'run typecheck' }],
+                plan: '# Example plan',
+                planFilePath: '/Users/seungjin/.claude/plans/example.md',
+              },
+            },
+          ],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      unreadDone: false,
+      needsInput: true,
+      needsInputReason: 'plan_handoff',
+      needsInputEvidence: {
+        strength: 'explicit',
+        engine: 'claude-code',
+        anchorType: 'exit_plan_mode',
+        anchorId: 'toolu_exit_plan',
+      },
+    })
+  })
 })
 
 describe('createCodexSemanticParser', () => {
