@@ -1,15 +1,10 @@
 import type {
-  CharacterMarkerStatus,
   CharacterRuntimeState,
 } from './character-runtime-state'
 
 // --- Engine ---
 
 export type EngineType = 'claude-code' | 'codex'
-
-// --- Character ---
-
-export type CharacterStatus = CharacterMarkerStatus
 
 export interface GridPosition {
   x: number
@@ -31,7 +26,6 @@ export interface Character {
   gridPosition: GridPosition | null
   currentSessionId: string | null
   sessionHistory: string[] // max 10, most recent first
-  status: CharacterStatus
   stats: CharacterStats
   footprint?: ItemFootprint // defaults to FOOTPRINTS.character (2×2) if not set
   zOrder?: number

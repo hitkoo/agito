@@ -6,7 +6,6 @@ import {
   isTerminalDockOwner,
   shouldScheduleTrailingTerminalResize,
   shouldKeepTerminalLoading,
-  shouldAutoResumeTerminal,
   shouldRenderAssignedTerminal,
   shouldSendPtyResize,
 } from '../src/shared/terminal-dock-state'
@@ -97,32 +96,6 @@ describe('isTerminalDockOwner', () => {
     expect(isTerminalDockOwner({ detachedMode: false, ownerWindow: 'detached' })).toBe(false)
     expect(isTerminalDockOwner({ detachedMode: true, ownerWindow: 'attached' })).toBe(false)
     expect(isTerminalDockOwner({ detachedMode: true, ownerWindow: 'detached' })).toBe(true)
-  })
-})
-
-describe('shouldAutoResumeTerminal', () => {
-  test('does not auto-resume from hidden attached dock', () => {
-    expect(
-      shouldAutoResumeTerminal({
-        renderMode: 'hidden',
-        activeCharacterId: 'char-1',
-        hasAssignedSession: true,
-        ptyAlive: false,
-        isResuming: false,
-      })
-    ).toBe(false)
-  })
-
-  test('auto-resumes only for active visible dock owner', () => {
-    expect(
-      shouldAutoResumeTerminal({
-        renderMode: 'detached-dock',
-        activeCharacterId: 'char-1',
-        hasAssignedSession: true,
-        ptyAlive: false,
-        isResuming: false,
-      })
-    ).toBe(true)
   })
 })
 

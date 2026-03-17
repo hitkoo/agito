@@ -1,12 +1,11 @@
 import { create } from 'zustand'
-import type { Character, CharacterStatus, AgitoPersistentData } from '../../../shared/types'
+import type { Character, AgitoPersistentData } from '../../../shared/types'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 
 interface CharacterStore {
   characters: Character[]
   loadFromMain: () => Promise<void>
   setCharacters: (characters: Character[]) => void
-  updateStatus: (characterId: string, status: CharacterStatus) => void
   addCharacter: (character: Character) => void
   removeCharacter: (characterId: string) => void
 }
@@ -20,14 +19,6 @@ export const useCharacterStore = create<CharacterStore>((set, get) => ({
   },
 
   setCharacters: (characters) => set({ characters }),
-
-  updateStatus: (characterId, status) => {
-    set({
-      characters: get().characters.map((c) =>
-        c.id === characterId ? { ...c, status } : c
-      ),
-    })
-  },
 
   addCharacter: (character) => {
     const updated = [...get().characters, character]

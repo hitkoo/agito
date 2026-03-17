@@ -5,7 +5,6 @@ export type CharacterMarkerStatus =
   | 'idle'
   | 'running'
   | 'need_input'
-  | 'need_approval'
   | 'done'
   | 'error'
 
@@ -14,14 +13,10 @@ export interface CharacterRuntimeState {
   engine: EngineType | null
   sessionId: string | null
   markerStatus: CharacterMarkerStatus
-  expectedAlive: boolean
-  ptyAlive: boolean
   isRunning: boolean
   needsInput: boolean
-  needsApproval: boolean
   unreadDone: boolean
   activeToolName: string | null
-  activeToolKind: string | null
   attentionActive: boolean
   lastTurnEndedAt: number | null
   lastAssistantPreview: string | null
@@ -56,14 +51,10 @@ export function buildInitialRuntimeState(
     engine: options.engine,
     sessionId,
     markerStatus: sessionId ? 'idle' : 'no_session',
-    expectedAlive: false,
-    ptyAlive: false,
     isRunning: false,
     needsInput: false,
-    needsApproval: false,
     unreadDone: false,
     activeToolName: null,
-    activeToolKind: null,
     attentionActive: false,
     lastTurnEndedAt: null,
     lastAssistantPreview: null,
@@ -87,11 +78,18 @@ export function deriveCharacterMarkerStatus(
 ): CharacterMarkerStatus {
   if (state.sessionId === null) return 'no_session'
   if (state.lastError) return 'error'
-  if (state.needsApproval) return 'need_approval'
   if (state.needsInput) return 'need_input'
   if (state.isRunning) return 'running'
   if (state.unreadDone) return 'done'
   return 'idle'
+}
+
+export function getCharacterMarkerStatus(
+  runtimeState: Pick<CharacterRuntimeState, 'markerStatus'> | null | undefined,
+  sessionId: string | null | undefined
+): CharacterMarkerStatus {
+  if (runtimeState?.markerStatus) return runtimeState.markerStatus
+  return sessionId ? 'idle' : 'no_session'
 }
 
 export function shouldClearDoneOnAttention(input: {

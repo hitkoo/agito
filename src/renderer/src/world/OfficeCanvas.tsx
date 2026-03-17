@@ -8,7 +8,6 @@ import { useUIStore, type AppTab, type ThemeMode } from '../stores/ui-store'
 import { useRoomStore } from '../stores/room-store'
 import type {
   Character,
-  CharacterStatus,
   PlacedItem,
   ItemManifest,
   GridPosition,
@@ -16,7 +15,11 @@ import type {
   CropRect,
 } from '../../../shared/types'
 import { getEffectiveFootprint } from '../../../shared/types'
-import type { CharacterRuntimeState } from '../../../shared/character-runtime-state'
+import {
+  getCharacterMarkerStatus,
+  type CharacterMarkerStatus,
+  type CharacterRuntimeState,
+} from '../../../shared/character-runtime-state'
 import { getManifestById } from '../../../shared/item-manifests'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 
@@ -55,12 +58,11 @@ function getEffectiveMode(theme: ThemeMode): 'dark' | 'light' {
   return theme
 }
 
-const STATUS_COLORS: Record<CharacterStatus, number> = {
+const STATUS_COLORS: Record<CharacterMarkerStatus, number> = {
   no_session: 0x6c757d,
   idle: 0x7c8591,
   running: 0x4ecdc4,
   need_input: 0xffd93d,
-  need_approval: 0xffb347,
   done: 0x51cf66,
   error: 0xff6b6b,
 }
@@ -438,7 +440,6 @@ function WaitingEffect({ w, h, color }: { w: number; h: number; color: number })
 const STATUS_BADGE_EMOJI: Record<string, string> = {
   running: '\u{26A1}',
   need_input: '\u{1F4AD}',
-  need_approval: '\u{1F6A7}',
   done: '\u{2705}',
   error: '\u{2757}',
 }
@@ -451,9 +452,6 @@ function getStatusBadgeText(
     return runtimeState.activeToolName
   }
   if (status === 'need_input') return 'reply'
-  if (status === 'need_approval') {
-    return runtimeState?.activeToolName ? `approve ${runtimeState.activeToolName}` : 'approve'
-  }
   if (status === 'error') return 'error'
   return status.replace(/_/g, ' ')
 }
@@ -1334,7 +1332,8 @@ function CharacterSprite({
     y: character.gridPosition.y,
   })
 
-  const color = STATUS_COLORS[character.status] ?? STATUS_COLORS.idle
+  const status = getCharacterMarkerStatus(runtimeState, character.currentSessionId)
+  const color = STATUS_COLORS[status] ?? STATUS_COLORS.idle
 
   const labelStyle = useMemo(
     () =>
@@ -1347,7 +1346,7 @@ function CharacterSprite({
   )
 
   const statusEffect = useMemo((): ReactElement => {
-    switch (character.status) {
+    switch (status) {
       case 'no_session':
       case 'idle':
         return <IdleEffect w={w} h={h} color={color} />
@@ -1358,12 +1357,11 @@ function CharacterSprite({
       case 'done':
         return <DoneEffect w={w} h={h} color={color} />
       case 'need_input':
-      case 'need_approval':
         return <WaitingEffect w={w} h={h} color={color} />
       default:
         return <IdleEffect w={w} h={h} color={color} />
     }
-  }, [character.status, w, h, color])
+  }, [status, w, h, color])
 
   const onPointerDown = useCallback(
     (e: import('pixi.js').FederatedPointerEvent) => {
@@ -1557,7 +1555,7 @@ function CharacterSprite({
                 <Sprite texture={texture} width={sw} height={sh} />
               </Container>
             </Container>
-            <StatusBadge status={character.status} w={w} runtimeState={runtimeState} />
+            <StatusBadge status={status} w={w} runtimeState={runtimeState} />
           </>
         ) : (
           statusEffect

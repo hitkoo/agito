@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
-import type { CharacterRuntimeState, CharacterMarkerStatus } from '../../../shared/character-runtime-state'
+import type { CharacterRuntimeState } from '../../../shared/character-runtime-state'
 import type { AgitoPersistentData } from '../../../shared/types'
 
 interface RuntimeStore {
@@ -8,10 +8,9 @@ interface RuntimeStore {
   loadFromMain: () => Promise<void>
   syncStates: (states: CharacterRuntimeState[]) => void
   updateState: (state: CharacterRuntimeState) => void
-  getMarkerStatus: (characterId: string, fallback: CharacterMarkerStatus) => CharacterMarkerStatus
 }
 
-export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
+export const useRuntimeStore = create<RuntimeStore>((set) => ({
   states: {},
 
   loadFromMain: async () => {
@@ -39,8 +38,4 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
         [state.characterId]: state,
       },
     })),
-
-  getMarkerStatus: (characterId, fallback) => {
-    return get().states[characterId]?.markerStatus ?? fallback
-  },
 }))

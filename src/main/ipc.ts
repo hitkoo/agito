@@ -72,29 +72,17 @@ export function registerIPCHandlers(store: AgitoStore): void {
   runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
   runtimeService.onUpdate((state) => {
     broadcastToAll(IPC_EVENTS.CHARACTER_RUNTIME, state)
-    broadcastToAll(IPC_EVENTS.CHARACTER_STATUS, {
-      characterId: state.characterId,
-      status: state.markerStatus,
-    })
   })
 
   const buildStoreSnapshot = () => {
     const characters = store.getCharacters()
     runtimeService.syncCharacters(characters, store.getSessions())
-    const runtimeStates = runtimeService.getAllStates()
-    const runtimeByCharacterId = new Map(runtimeStates.map((state) => [state.characterId, state]))
-
     return {
-      characters: characters.map((character) => ({
-        ...character,
-        status:
-          runtimeByCharacterId.get(character.id)?.markerStatus ??
-          (character.currentSessionId ? 'idle' : 'no_session'),
-      })),
+      characters,
       roomLayout: store.getRoomLayout(),
       sessions: store.getSessions(),
       settings: store.getSettings(),
-      runtimeStates,
+      runtimeStates: runtimeService.getAllStates(),
     }
   }
 
@@ -201,10 +189,6 @@ export function registerIPCHandlers(store: AgitoStore): void {
     return terminalSessions.getSnapshot(characterId)
   })
 
-  ipcMain.handle(IPC_COMMANDS.CHARACTER_RUNTIME_SNAPSHOT, () => {
-    return runtimeService.getAllStates()
-  })
-
   ipcMain.handle(
     IPC_COMMANDS.CHARACTER_RUNTIME_SET_ATTENTION,
     (_, args: { characterId: string; attentionActive: boolean }) => {
@@ -233,7 +217,6 @@ export function registerIPCHandlers(store: AgitoStore): void {
         gridPosition,
         currentSessionId: null,
         sessionHistory: [],
-        status: 'no_session',
         stats: {
           createdAt: now,
           totalTasks: 0,
@@ -328,7 +311,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
   ipcMain.handle(
     IPC_COMMANDS.SESSION_RESUME,
-    async (_, args: { characterId: string; sessionId: string; workingDirectory?: string }) => {
+    async (_, args: { characterId: string; sessionId: string; workingDirectory?: string; engineType?: EngineType }) => {
       const { characterId, sessionId } = args
 
       const characters = store.getCharacters()
@@ -346,9 +329,11 @@ export function registerIPCHandlers(store: AgitoStore): void {
         throw new Error('Working directory not found for this session')
       }
 
-      // Resolve engine: from mapping, or fall back to character.engine
+      // Resolve engine: from args, mapping, or character.engine
       let engineType: EngineType
-      if (existingMapping) {
+      if (args.engineType) {
+        engineType = args.engineType
+      } else if (existingMapping) {
         engineType = existingMapping.engineType
       } else if (character.engine !== null) {
         engineType = character.engine
@@ -414,7 +399,7 @@ export function registerIPCHandlers(store: AgitoStore): void {
     const characters = store.getCharacters()
     const updatedCharacters = characters.map((c) =>
       c.id === characterId
-        ? { ...c, currentSessionId: null, engine: null, status: 'idle' as const }
+        ? { ...c, currentSessionId: null, engine: null }
         : c
     )
     store.saveCharacters(updatedCharacters)

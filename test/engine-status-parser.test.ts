@@ -109,7 +109,6 @@ describe('createClaudeSemanticParser', () => {
     expect(parser.getState()).toMatchObject({
       isRunning: true,
       activeToolName: null,
-      activeToolKind: null,
     })
   })
 

@@ -1,8 +1,10 @@
 import { type ReactElement, useEffect, useState, useCallback } from 'react'
 import { useCharacterStore } from '../stores/character-store'
+import { useRuntimeStore } from '../stores/runtime-store'
 import { useUIStore } from '../stores/ui-store'
 import { TerminalView } from './TerminalView'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
+import { getCharacterMarkerStatus } from '../../../shared/character-runtime-state'
 import { Button } from '../components/ui/button'
 import {
   DropdownMenu,
@@ -18,7 +20,6 @@ const STATUS_EMOJI: Record<string, string> = {
   idle: '\u{1F4A4}',
   need_input: '\u{1F4AD}',
   running: '\u{26A1}',
-  need_approval: '\u{1F6A7}',
   error: '\u{2757}',
   done: '\u{2705}',
 }
@@ -31,6 +32,7 @@ export function CharacterPanel({ characterId }: CharacterPanelProps): ReactEleme
   const character = useCharacterStore((s) =>
     s.characters.find((c) => c.id === characterId)
   )
+  const runtimeState = useRuntimeStore((s) => s.states[characterId])
   const panelWidth = useUIStore((s) => s.panelWidth)
   const selectCharacter = useUIStore((s) => s.selectCharacter)
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
@@ -74,6 +76,7 @@ export function CharacterPanel({ characterId }: CharacterPanelProps): ReactEleme
 
   const hasActiveSession = character.currentSessionId !== null
   const historyEntries = character.sessionHistory ?? []
+  const status = getCharacterMarkerStatus(runtimeState, character.currentSessionId)
 
   return (
     <div
@@ -87,13 +90,13 @@ export function CharacterPanel({ characterId }: CharacterPanelProps): ReactEleme
       <div className="flex items-center justify-between p-3 bg-secondary border-b border-border">
         <div className="flex items-center gap-2">
           <span className="text-xl">
-            {STATUS_EMOJI[character.status] || STATUS_EMOJI.idle}
+            {STATUS_EMOJI[status] || STATUS_EMOJI.idle}
           </span>
           <span className="font-bold text-base">
             {character.name}
           </span>
           <span className="text-xs text-muted-foreground uppercase">
-            {character.status}
+            {status}
           </span>
         </div>
 

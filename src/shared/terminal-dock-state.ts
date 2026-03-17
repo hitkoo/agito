@@ -17,14 +17,6 @@ export interface TerminalDockRenderInput {
   detachedReady: boolean
 }
 
-export interface TerminalAutoResumeInput {
-  renderMode: TerminalDockRenderMode
-  activeCharacterId: string | null
-  hasAssignedSession: boolean
-  ptyAlive: boolean
-  isResuming: boolean
-}
-
 export interface PtyResizeGuardInput {
   isActiveOwner: boolean
   width: number
@@ -97,15 +89,6 @@ export function buildInitialTerminalReplay(
 
 export function canHydrateTerminalViewport(input: TerminalViewportMeasureInput): boolean {
   return input.width > 0 && input.height > 0
-}
-
-export function shouldAutoResumeTerminal(input: TerminalAutoResumeInput): boolean {
-  if (input.renderMode !== 'attached-dock' && input.renderMode !== 'detached-dock') return false
-  if (!input.activeCharacterId) return false
-  if (!input.hasAssignedSession) return false
-  if (input.ptyAlive) return false
-  if (input.isResuming) return false
-  return true
 }
 
 export function shouldRenderAssignedTerminal(input: {

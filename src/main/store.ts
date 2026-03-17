@@ -20,7 +20,7 @@ import type {
   AgitoSettings,
 } from '../shared/types'
 
-const MIGRATION_VERSION = 1
+const MIGRATION_VERSION = 2
 
 export class AgitoStore {
   private basePath: string
@@ -91,6 +91,11 @@ export class AgitoStore {
           const spritePath = (char.sprite as string) || ''
           char.skin = spritePath.replace(/\/character\//g, '/skin/')
           delete char.sprite
+          changed = true
+        }
+
+        if ('status' in char) {
+          delete char.status
           changed = true
         }
       }
@@ -180,7 +185,13 @@ export class AgitoStore {
   }
 
   saveCharacters(characters: Character[]): void {
-    this.writeJSON(CHARACTERS_FILE, characters)
+    this.writeJSON(
+      CHARACTERS_FILE,
+      characters.map((character) => {
+        const { status: _status, ...rest } = character as Character & { status?: unknown }
+        return rest
+      })
+    )
   }
 
   getRoomLayout(): RoomLayout {

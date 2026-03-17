@@ -1,7 +1,9 @@
 import { type ReactElement, useEffect, useState, useCallback } from 'react'
 import { useCharacterStore } from '../stores/character-store'
+import { useRuntimeStore } from '../stores/runtime-store'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import type { Character } from '../../../shared/types'
+import { getCharacterMarkerStatus } from '../../../shared/character-runtime-state'
 import {
   Dialog,
   DialogContent,
@@ -125,7 +127,6 @@ const STATUS_COLORS: Record<string, string> = {
   idle: 'bg-gray-400',
   running: 'bg-green-500',
   need_input: 'bg-yellow-400',
-  need_approval: 'bg-orange-400',
   done: 'bg-green-500',
   error: 'bg-red-500',
 }
@@ -144,6 +145,8 @@ function CharacterListCard({
   onSelect: (id: string) => void
 }): ReactElement {
   const preview = useSpritePreview(character.skin)
+  const runtimeState = useRuntimeStore((s) => s.states[character.id])
+  const status = getCharacterMarkerStatus(runtimeState, character.currentSessionId)
 
   return (
     <button
@@ -175,10 +178,10 @@ function CharacterListCard({
         <div className="flex items-center gap-1.5 mt-0.5">
           <span className="text-xs text-muted-foreground">{character.engine ?? 'no engine'}</span>
           <span
-            className={`h-2 w-2 shrink-0 rounded-full ${STATUS_COLORS[character.status] ?? STATUS_COLORS.idle}`}
-            title={character.status}
+            className={`h-2 w-2 shrink-0 rounded-full ${STATUS_COLORS[status] ?? STATUS_COLORS.idle}`}
+            title={status}
           />
-          <span className="text-[10px] text-muted-foreground">{character.status}</span>
+          <span className="text-[10px] text-muted-foreground">{status}</span>
         </div>
       </div>
     </button>

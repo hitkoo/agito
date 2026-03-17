@@ -52,8 +52,6 @@ function createBaseParser(engine: EngineType): {
     engine,
     sessionId: 'semantic-session',
   })
-  state.expectedAlive = true
-  state.ptyAlive = true
 
   return {
     state,
@@ -62,27 +60,21 @@ function createBaseParser(engine: EngineType): {
     },
     clearError() {
       state.lastError = null
-      state.ptyAlive = true
     },
     startRunning(toolName) {
       state.lastError = null
       state.isRunning = true
       state.unreadDone = false
       state.needsInput = false
-      state.needsApproval = false
       state.activeToolName = toolName ?? state.activeToolName
-      state.activeToolKind = toolName ?? state.activeToolKind
-      state.ptyAlive = true
     },
     finishTool() {
       state.activeToolName = null
-      state.activeToolKind = null
     },
     completeTurn() {
       state.lastError = null
       state.isRunning = false
       state.activeToolName = null
-      state.activeToolKind = null
       state.lastTurnEndedAt = Date.now()
       const completionKind = classifyAssistantPreview(state.lastAssistantPreview)
       state.needsInput = completionKind === 'need_input'
@@ -92,11 +84,8 @@ function createBaseParser(engine: EngineType): {
       state.isRunning = false
       state.unreadDone = false
       state.needsInput = false
-      state.needsApproval = false
       state.activeToolName = null
-      state.activeToolKind = null
       state.lastError = message
-      state.ptyAlive = false
     },
   }
 }

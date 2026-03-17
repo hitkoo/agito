@@ -19,9 +19,11 @@ import {
   isTerminalDockOwner,
   shouldRenderAssignedTerminal,
 } from "../../../shared/terminal-dock-state";
+import { getCharacterMarkerStatus } from "../../../shared/character-runtime-state";
 import { TerminalView } from "./TerminalView";
 import { MoreVertical } from "lucide-react";
 import { toast } from "sonner";
+import { useRuntimeStore } from "../stores/runtime-store";
 
 // ---------------------------------------------------------------------------
 // Resize direction types
@@ -49,7 +51,6 @@ const STATUS_DOT_COLORS: Record<string, string> = {
   idle: "#7c8591",
   running: "#4ecdc4",
   need_input: "#ffd93d",
-  need_approval: "#ffb347",
   done: "#51cf66",
   error: "#ff6b6b",
 };
@@ -870,6 +871,7 @@ function TabButton({
   onContextMenu: (e: React.MouseEvent) => void;
 }): ReactElement {
   const [skinPreview, setSkinPreview] = useState<string | null>(null);
+  const runtimeState = useRuntimeStore((s) => s.states[character.id]);
 
   useEffect(() => {
     if (!character.skin) return;
@@ -881,8 +883,8 @@ function TabButton({
       .then(setSkinPreview);
   }, [character.skin]);
 
-  const dotColor =
-    STATUS_DOT_COLORS[character.status] || STATUS_DOT_COLORS.idle;
+  const status = getCharacterMarkerStatus(runtimeState, character.currentSessionId);
+  const dotColor = STATUS_DOT_COLORS[status] || STATUS_DOT_COLORS.idle;
 
   return (
     <div
@@ -945,6 +947,7 @@ function MinimizedFloatBarItem({
   onClick: () => void;
 }): ReactElement {
   const [skinPreview, setSkinPreview] = useState<string | null>(null);
+  const runtimeState = useRuntimeStore((s) => s.states[character.id]);
 
   useEffect(() => {
     if (!character.skin) return;
@@ -956,8 +959,8 @@ function MinimizedFloatBarItem({
       .then(setSkinPreview);
   }, [character.skin]);
 
-  const dotColor =
-    STATUS_DOT_COLORS[character.status] || STATUS_DOT_COLORS.idle;
+  const status = getCharacterMarkerStatus(runtimeState, character.currentSessionId);
+  const dotColor = STATUS_DOT_COLORS[status] || STATUS_DOT_COLORS.idle;
 
   return (
     <button
@@ -1210,6 +1213,7 @@ function SessionAssignView({
           characterId: character.id,
           sessionId,
           workingDirectory,
+          engineType: selectedEngine ?? character.engine,
         });
         await loadCharacters();
         onSessionStarted();

@@ -18,7 +18,7 @@ describe('deriveCharacterMarkerStatus', () => {
     ).toBe('no_session')
   })
 
-  test('prioritizes approval and explicit input over running and done', () => {
+  test('prioritizes explicit input over running and done', () => {
     expect(
       deriveCharacterMarkerStatus({
         ...buildInitialRuntimeState({
@@ -26,22 +26,6 @@ describe('deriveCharacterMarkerStatus', () => {
           engine: 'claude-code',
           sessionId: 'session-1',
         }),
-        ptyAlive: true,
-        isRunning: true,
-        unreadDone: true,
-        needsInput: true,
-        needsApproval: true,
-      })
-    ).toBe('need_approval')
-
-    expect(
-      deriveCharacterMarkerStatus({
-        ...buildInitialRuntimeState({
-          characterId: 'char-1',
-          engine: 'claude-code',
-          sessionId: 'session-1',
-        }),
-        ptyAlive: true,
         isRunning: true,
         unreadDone: true,
         needsInput: true,
@@ -57,7 +41,6 @@ describe('deriveCharacterMarkerStatus', () => {
           engine: 'codex',
           sessionId: 'session-1',
         }),
-        ptyAlive: true,
         isRunning: true,
         unreadDone: true,
       })
@@ -72,7 +55,6 @@ describe('deriveCharacterMarkerStatus', () => {
           engine: 'codex',
           sessionId: 'session-1',
         }),
-        ptyAlive: true,
         unreadDone: true,
       })
     ).toBe('done')
@@ -86,21 +68,6 @@ describe('deriveCharacterMarkerStatus', () => {
           engine: 'claude-code',
           sessionId: 'session-1',
         }),
-        ptyAlive: true,
-      })
-    ).toBe('idle')
-  })
-
-  test('does not derive error from PTY flags alone', () => {
-    expect(
-      deriveCharacterMarkerStatus({
-        ...buildInitialRuntimeState({
-          characterId: 'char-1',
-          engine: 'claude-code',
-          sessionId: 'session-1',
-        }),
-        expectedAlive: true,
-        ptyAlive: false,
       })
     ).toBe('idle')
   })

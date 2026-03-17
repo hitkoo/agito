@@ -90,7 +90,6 @@ describe('CharacterRuntimeService', () => {
         gridPosition: null,
         currentSessionId: sessionId,
         sessionHistory: [sessionId],
-        status: 'idle',
         stats: {
           createdAt: '2026-03-17T00:00:00.000Z',
           totalTasks: 0,
@@ -152,7 +151,6 @@ describe('CharacterRuntimeService', () => {
         gridPosition: null,
         currentSessionId: sessionId,
         sessionHistory: [sessionId],
-        status: 'idle',
         stats: {
           createdAt: '2026-03-17T00:00:00.000Z',
           totalTasks: 0,
@@ -207,7 +205,6 @@ describe('CharacterRuntimeService', () => {
         gridPosition: null,
         currentSessionId: sessionId,
         sessionHistory: [sessionId],
-        status: 'idle',
         stats: {
           createdAt: '2026-03-17T00:00:00.000Z',
           totalTasks: 0,

@@ -278,15 +278,12 @@ export class CharacterRuntimeService {
 
     entry.state.isRunning = parserState.isRunning
     entry.state.activeToolName = parserState.activeToolName
-    entry.state.activeToolKind = parserState.activeToolKind
     entry.state.lastAssistantPreview = parserState.lastAssistantPreview
     entry.state.lastTurnEndedAt = parserState.lastTurnEndedAt
     entry.state.lastError = parserState.lastError
-    entry.state.needsApproval = parserState.needsApproval
     entry.state.needsInput = parserState.needsInput
     entry.state.unreadDone =
       !options.suppressUnreadDone &&
-      !entry.state.needsApproval &&
       !entry.state.needsInput &&
       parserState.unreadDone
 
