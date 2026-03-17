@@ -548,6 +548,67 @@ describe('createClaudeSemanticParser', () => {
     })
   })
 
+  test('treats Claude user interrupt text as an explicit error and clears pending approval state', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_interrupt',
+              name: 'Grep',
+              input: { pattern: 'status-pulse', path: '/tmp/example.ts' },
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        timestamp: '2026-03-17T18:17:11.647Z',
+        type: 'progress',
+        toolUseID: 'toolu_interrupt',
+        data: {
+          type: 'hook_progress',
+          hookEvent: 'PreToolUse',
+        },
+      })
+    )
+
+    expect(parser.getMeta()).toMatchObject({
+      pendingNeedInputCandidate: {
+        anchorId: 'toolu_interrupt',
+        anchorType: 'pre_tool_use',
+      },
+    })
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '[Request interrupted by user]' }],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      activeToolName: null,
+      needsInput: false,
+      lastError: 'interrupted_by_user',
+    })
+    expect(parser.getMeta()).toMatchObject({
+      pendingNeedInputCandidate: null,
+    })
+  })
+
   test('tracks a pending Claude approval candidate after PreToolUse for non-exempt tools', () => {
     const parser = createClaudeSemanticParser()
 

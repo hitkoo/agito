@@ -573,4 +573,93 @@ describe('CharacterRuntimeService', () => {
 
     service.stopSession('char-approval-startup')
   })
+
+  test('hydrates Claude user interrupts as error instead of a new running turn', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-claude-interrupt'
+    writeFileSync(
+      join(transcriptDir, `${sessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu_interrupt',
+                name: 'Grep',
+                input: { pattern: 'status-pulse', path: '/tmp/example.ts' },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-03-17T18:17:11.647Z',
+          type: 'progress',
+          toolUseID: 'toolu_interrupt',
+          data: {
+            type: 'hook_progress',
+            hookEvent: 'PreToolUse',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-03-17T18:17:15.355Z',
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: '[Request interrupted by user]' }],
+          },
+        }),
+      ].join('\n') + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-interrupt',
+        name: 'interrupt',
+        soul: '',
+        skin: '',
+        engine: 'claude-code',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2026-03-17T18:17:00.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-interrupt',
+        sessionId,
+        engineType: 'claude-code',
+        workingDirectory: '/tmp/project',
+        createdAt: '2026-03-17T18:17:00.000Z',
+        lastActiveAt: '2026-03-17T18:17:16.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({
+      homeDirectory: fakeHome,
+      approvalHeuristicDelayMs: 10,
+    })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-interrupt')).toMatchObject({
+      markerStatus: 'error',
+      isRunning: false,
+      activeToolName: null,
+      needsInput: false,
+      lastError: 'interrupted_by_user',
+    })
+
+    service.stopSession('char-interrupt')
+  })
 })

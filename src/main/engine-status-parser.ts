@@ -155,6 +155,10 @@ function isClaudePermissionDeniedText(text: string): boolean {
   return text.toLowerCase().includes('permission for this tool use was denied')
 }
 
+function isClaudeUserInterruptText(text: string): boolean {
+  return text.trim() === '[Request interrupted by user]'
+}
+
 function hasClaudePlanArtifact(record: ClaudeRecord): boolean {
   if (!record.toolUseResult || typeof record.toolUseResult !== 'object') return false
   const value = record.toolUseResult as Record<string, unknown>
@@ -429,7 +433,6 @@ export function createClaudeSemanticParser(): SemanticParser {
 
       if (record.type !== 'user') return
 
-      clearError()
       const content = record.message?.content
       const blocks = Array.isArray(content) ? content : []
       const userText =
@@ -441,6 +444,16 @@ export function createClaudeSemanticParser(): SemanticParser {
               .join('\n')
               .trim()
       const hasToolResultBlock = blocks.some((block) => block.type === 'tool_result')
+      if (userText && !hasToolResultBlock && isClaudeUserInterruptText(userText)) {
+        activeTools.clear()
+        finishTool()
+        pendingPlanHandoffCandidate = null
+        pendingNeedInputCandidate = null
+        setError('interrupted_by_user')
+        return
+      }
+
+      clearError()
       if (userText && !hasToolResultBlock) {
         startTurnRunning()
         finishTool()
