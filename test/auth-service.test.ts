@@ -5,7 +5,7 @@ import {
   type AuthProviderResult,
   type CredentialStore,
 } from '../src/main/auth/auth-service'
-import type { AuthProvider, AuthUserProfile } from '../src/shared/auth'
+import type { AuthProvider, AuthSignUpResult, AuthUserProfile } from '../src/shared/auth'
 
 interface FakeStoredSession {
   accessToken: string
@@ -36,6 +36,7 @@ class FakeAuthProvider implements AuthProviderAdapter<FakeStoredSession> {
   signUpResult: AuthProviderResult<FakeStoredSession> | null = null
   signInWithGoogleResult: AuthProviderResult<FakeStoredSession> | null = null
   passwordResetEmail: string | null = null
+  resendVerificationEmail: string | null = null
   signOutCount = 0
 
   async restoreSession(session: FakeStoredSession): Promise<FakeStoredSession | null> {
@@ -91,10 +92,21 @@ class FakeAuthProvider implements AuthProviderAdapter<FakeStoredSession> {
   async sendPasswordReset(email: string): Promise<void> {
     this.passwordResetEmail = email
   }
+
+  async resendSignUpVerification(email: string): Promise<void> {
+    this.resendVerificationEmail = email
+  }
+}
+
+async function syncProfile(session: FakeStoredSession): Promise<AuthUserProfile> {
+  return {
+    ...session.profile,
+    displayName: `${session.profile.displayName ?? 'Synced'} (server)`,
+  }
 }
 
 describe('MainAuthService', () => {
-  test('restores a persisted session and derives pending_verification from the profile', async () => {
+  test('clears an unverified persisted session during restore and stays signed_out', async () => {
     const credentials = new InMemoryCredentialStore()
     const provider = new FakeAuthProvider()
 
@@ -119,12 +131,11 @@ describe('MainAuthService', () => {
 
     await service.initialize()
 
-    expect(service.getState()).toMatchObject({
-      status: 'pending_verification',
-      profile: {
-        email: 'pending@example.com',
-        emailVerified: false,
-      },
+    expect(provider.signOutCount).toBe(1)
+    expect(credentials.session).toBeNull()
+    expect(service.getState()).toEqual({
+      status: 'signed_out',
+      profile: null,
     })
   })
 
@@ -165,6 +176,39 @@ describe('MainAuthService', () => {
     })
   })
 
+  test('rejects unverified email sign-in and clears the local session state', async () => {
+    const credentials = new InMemoryCredentialStore()
+    const provider = new FakeAuthProvider()
+    provider.signInResult = {
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      provider: 'email',
+      profile: {
+        id: 'user-unverified',
+        email: 'pending@example.com',
+        displayName: null,
+        avatarUrl: null,
+        provider: 'email',
+        emailVerified: false,
+      },
+    }
+
+    const service = new MainAuthService({
+      credentialStore: credentials,
+      provider,
+    })
+
+    await expect(service.signInWithEmail('pending@example.com', 'secret')).rejects.toThrow(
+      'Verify your email before signing in.'
+    )
+    expect(provider.signOutCount).toBe(1)
+    expect(credentials.session).toBeNull()
+    expect(service.getState()).toEqual({
+      status: 'signed_out',
+      profile: null,
+    })
+  })
+
   test('clears the persisted session on sign out', async () => {
     const credentials = new InMemoryCredentialStore()
     const provider = new FakeAuthProvider()
@@ -198,7 +242,7 @@ describe('MainAuthService', () => {
     })
   })
 
-  test('supports sign up without a persisted session and exposes pending_verification', async () => {
+  test('returns a verification_sent result and keeps auth state signed_out after sign up', async () => {
     const credentials = new InMemoryCredentialStore()
     const provider = new FakeAuthProvider()
 
@@ -207,14 +251,64 @@ describe('MainAuthService', () => {
       provider,
     })
 
-    await service.signUpWithEmail('pending@example.com', 'secret')
+    const result = await service.signUpWithEmail('pending@example.com', 'secret')
 
+    expect(result).toEqual<AuthSignUpResult>({
+      status: 'verification_sent',
+      email: 'pending@example.com',
+    })
     expect(credentials.session).toBeNull()
-    expect(service.getState()).toMatchObject({
-      status: 'pending_verification',
+    expect(provider.signOutCount).toBe(1)
+    expect(service.getState()).toEqual({
+      status: 'signed_out',
+      profile: null,
+    })
+  })
+
+  test('resends signup verification emails through the provider', async () => {
+    const credentials = new InMemoryCredentialStore()
+    const provider = new FakeAuthProvider()
+
+    const service = new MainAuthService({
+      credentialStore: credentials,
+      provider,
+    })
+
+    await service.resendSignUpVerification('pending@example.com')
+
+    expect(provider.resendVerificationEmail).toBe('pending@example.com')
+  })
+
+  test('syncs the authenticated profile through the server when a session exists', async () => {
+    const credentials = new InMemoryCredentialStore()
+    const provider = new FakeAuthProvider()
+    provider.signInResult = {
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      provider: 'email',
       profile: {
-        email: 'pending@example.com',
-        emailVerified: false,
+        id: 'user-4',
+        email: 'synced@example.com',
+        displayName: 'Local Name',
+        avatarUrl: null,
+        provider: 'email',
+        emailVerified: true,
+      },
+    }
+
+    const service = new MainAuthService({
+      credentialStore: credentials,
+      provider,
+      syncProfile,
+    })
+
+    await service.signInWithEmail('synced@example.com', 'secret')
+
+    expect(credentials.session?.profile.displayName).toBe('Local Name (server)')
+    expect(service.getState()).toMatchObject({
+      status: 'signed_in',
+      profile: {
+        displayName: 'Local Name (server)',
       },
     })
   })

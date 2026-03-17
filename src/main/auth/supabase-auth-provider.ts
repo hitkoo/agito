@@ -204,6 +204,14 @@ export class SupabaseAuthProvider implements AuthProviderAdapter<StoredAuthSessi
     if (error) throw error
   }
 
+  async resendSignUpVerification(email: string): Promise<void> {
+    const { error } = await this.client.auth.resend({
+      type: 'signup',
+      email,
+    })
+    if (error) throw error
+  }
+
   private async waitForPackagedCallback(): Promise<OAuthCallbackPayload> {
     if (!this.waitForDeepLinkCallback) {
       throw new Error('Packaged Google OAuth callback handler is not configured')

@@ -16,24 +16,24 @@ describe('deriveAuthStatus', () => {
     ).toBe('signed_out')
   })
 
-  test('returns pending_verification when the session exists but email is unverified', () => {
+  test('returns signed_out when the session exists but email is unverified', () => {
     expect(
       deriveAuthStatus({
         hasIdentity: true,
         hasSession: true,
         emailVerified: false,
       })
-    ).toBe('pending_verification')
+    ).toBe('signed_out')
   })
 
-  test('returns pending_verification when signup created an unverified account without a local session yet', () => {
+  test('returns signed_out when identity exists without a verified session', () => {
     expect(
       deriveAuthStatus({
         hasIdentity: true,
         hasSession: false,
         emailVerified: false,
       })
-    ).toBe('pending_verification')
+    ).toBe('signed_out')
   })
 
   test('returns signed_in when session exists and email is verified', () => {
@@ -50,7 +50,6 @@ describe('deriveAuthStatus', () => {
 describe('canAccessGenerate', () => {
   test('allows generate only for fully signed-in accounts', () => {
     expect(canAccessGenerate('signed_out')).toBe(false)
-    expect(canAccessGenerate('pending_verification')).toBe(false)
     expect(canAccessGenerate('signed_in')).toBe(true)
   })
 })

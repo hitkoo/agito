@@ -1,4 +1,4 @@
-export type AuthStatus = 'signed_out' | 'pending_verification' | 'signed_in'
+export type AuthStatus = 'signed_out' | 'signed_in'
 
 export type AuthProvider = 'email' | 'google'
 
@@ -16,14 +16,18 @@ export interface AuthSessionState {
   profile: AuthUserProfile | null
 }
 
+export interface AuthSignUpResult {
+  status: 'verification_sent'
+  email: string
+}
+
 export function deriveAuthStatus(args: {
   hasIdentity: boolean
   hasSession: boolean
   emailVerified: boolean
 }): AuthStatus {
-  if (!args.hasIdentity && !args.hasSession) return 'signed_out'
-  if (!args.emailVerified) return 'pending_verification'
-  return args.emailVerified ? 'signed_in' : 'pending_verification'
+  if (!args.hasIdentity || !args.hasSession || !args.emailVerified) return 'signed_out'
+  return 'signed_in'
 }
 
 export function canAccessGenerate(status: AuthStatus): boolean {

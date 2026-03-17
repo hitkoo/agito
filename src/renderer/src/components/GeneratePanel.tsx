@@ -82,29 +82,21 @@ export function GeneratePanel(): JSX.Element {
   )
 
   if (!canAccessGenerate(authSession.status)) {
-    const isPendingVerification = authSession.status === 'pending_verification'
-
     return (
       <div className="absolute inset-0 z-10 flex items-center justify-center bg-background">
         <div className="w-full max-w-md rounded-xl border border-border bg-muted/20 p-8 text-center shadow-lg">
-          <h2 className="text-xl font-semibold">
-            {isPendingVerification ? 'Verify your email' : 'Sign in to use Generate'}
-          </h2>
+          <h2 className="text-xl font-semibold">Sign in to use Generate</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            {isPendingVerification
-              ? 'Your account exists, but Generate stays locked until your email is verified.'
-              : 'Local workspace features stay available, but image generation requires an account.'}
+            Local workspace features stay available, but image generation requires an account.
           </p>
 
           <div className="mt-6 flex justify-center gap-3">
-            {!isPendingVerification && (
-              <>
-                <Button onClick={() => openAuthDialog('sign_in')}>Sign in</Button>
-                <Button variant="outline" onClick={() => openAuthDialog('sign_up')}>
-                  Create account
-                </Button>
-              </>
-            )}
+            <>
+              <Button onClick={() => openAuthDialog('sign_in')}>Sign in</Button>
+              <Button variant="outline" onClick={() => openAuthDialog('sign_up')}>
+                Create account
+              </Button>
+            </>
           </div>
         </div>
       </div>

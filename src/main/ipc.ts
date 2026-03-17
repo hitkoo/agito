@@ -6,6 +6,7 @@ import { homedir } from 'os'
 import { IPC_COMMANDS, IPC_EVENTS } from '../shared/ipc-channels'
 import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, AssetGenerateRequest, AssetGenerateResult, ScannedSession } from '../shared/types'
 import { canAccessGenerate, type AuthSessionState } from '../shared/auth'
+import { hasSupabasePublicConfig, publicConfig } from '../shared/public-config'
 import type { AgitoStore } from './store'
 import { TerminalSessionService } from './terminal-session-service'
 import { GRID_COLS, GRID_ROWS, FOOTPRINTS, MAX_SESSION_HISTORY, ASSETS_DIR } from '../shared/constants'
@@ -77,38 +78,69 @@ export function registerIPCHandlers(
   const terminalSessions = new TerminalSessionService()
   const runtimeService = new CharacterRuntimeService()
   const credentialStore = createCredentialStore(store.getBasePath())
+  const syncAuthProfile = async (session: StoredAuthSession): Promise<StoredAuthSession['profile']> => {
+    const res = await fetch(`${publicConfig.apiUrl}/api/me`, {
+      headers: {
+        Authorization: `Bearer ${session.accessToken}`,
+      },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) {
+      throw new Error(`Failed to sync auth profile: ${res.status}`)
+    }
+    const profile = await res.json() as {
+      id: string
+      email: string
+      display_name: string | null
+      avatar_url: string | null
+      provider: 'email' | 'google'
+      email_verified: boolean
+    }
+    return {
+      id: profile.id,
+      email: profile.email,
+      displayName: profile.display_name,
+      avatarUrl: profile.avatar_url,
+      provider: profile.provider,
+      emailVerified: profile.email_verified,
+    }
+  }
   const authProvider: AuthProviderAdapter<StoredAuthSession> = (
-    process.env.AGITO_SUPABASE_URL && process.env.AGITO_SUPABASE_PUBLISHABLE_KEY
+    hasSupabasePublicConfig(publicConfig)
   )
     ? new SupabaseAuthProvider({
-        supabaseUrl: process.env.AGITO_SUPABASE_URL,
-        supabasePublishableKey: process.env.AGITO_SUPABASE_PUBLISHABLE_KEY,
+        supabaseUrl: publicConfig.supabaseUrl,
+        supabasePublishableKey: publicConfig.supabasePublishableKey,
         isPackaged: app.isPackaged,
         protocolScheme: options?.authProtocolScheme ?? 'agito',
         waitForDeepLinkCallback: options?.authDeepLinkCoordinator
           ? () => options.authDeepLinkCoordinator!.waitForCallback()
           : undefined,
-        resetPasswordRedirectUrl: process.env.AGITO_AUTH_RESET_REDIRECT_URL,
+        resetPasswordRedirectUrl: publicConfig.authResetRedirectUrl ?? undefined,
       })
     : {
         restoreSession: async () => null,
         signInWithEmail: async () => {
-          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_PUBLISHABLE_KEY.')
+          throw new Error('Auth is not configured. Set AGITO_PUBLIC_SUPABASE_URL and AGITO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.')
         },
         signUpWithEmail: async () => {
-          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_PUBLISHABLE_KEY.')
+          throw new Error('Auth is not configured. Set AGITO_PUBLIC_SUPABASE_URL and AGITO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.')
         },
         signInWithGoogle: async () => {
-          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_PUBLISHABLE_KEY.')
+          throw new Error('Auth is not configured. Set AGITO_PUBLIC_SUPABASE_URL and AGITO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.')
         },
         signOut: async () => {},
+        resendSignUpVerification: async () => {
+          throw new Error('Auth is not configured. Set AGITO_PUBLIC_SUPABASE_URL and AGITO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.')
+        },
         sendPasswordReset: async () => {
-          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_PUBLISHABLE_KEY.')
+          throw new Error('Auth is not configured. Set AGITO_PUBLIC_SUPABASE_URL and AGITO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.')
         },
       }
   const authService = new MainAuthService({
     credentialStore,
     provider: authProvider,
+    syncProfile: syncAuthProfile,
   })
   const authReady = authService.initialize().catch((error) => {
     console.error('[AUTH] Failed to initialize session', error)
@@ -289,6 +321,15 @@ export function registerIPCHandlers(
     await authReady
     return authService.signOut()
   })
+
+  ipcMain.handle(
+    IPC_COMMANDS.AUTH_RESEND_SIGNUP_VERIFICATION,
+    async (_, args: { email: string }) => {
+      await authReady
+      await authService.resendSignUpVerification(args.email)
+      return { success: true }
+    }
+  )
 
   ipcMain.handle(
     IPC_COMMANDS.AUTH_SEND_PASSWORD_RESET,
@@ -790,22 +831,14 @@ export function registerIPCHandlers(
 
   // --- Asset Generation (via agito-server) ---
 
-  const getApiBaseUrl = (): string => process.env.AGITO_API_URL || 'http://localhost:8000'
-
-
-
-
   ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE, async (_, req: AssetGenerateRequest) => {
-    const baseUrl = getApiBaseUrl()
+    const baseUrl = publicConfig.apiUrl
     await authReady
     const authState: AuthSessionState = authService.getState()
     if (!canAccessGenerate(authState.status)) {
       return {
         success: false,
-        error:
-          authState.status === 'pending_verification'
-            ? 'Verify your email to use Generate.'
-            : 'Sign in to use Generate.',
+        error: 'Sign in to use Generate.',
       }
     }
 

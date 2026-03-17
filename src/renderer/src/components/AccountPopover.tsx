@@ -1,4 +1,4 @@
-import { Mail, LogOut, ShieldCheck, ShieldAlert } from 'lucide-react'
+import { Mail, LogOut } from 'lucide-react'
 import { Button } from './ui/button'
 import { getAccountDisplayName, type AuthSessionState } from '../../../shared/auth'
 
@@ -71,14 +71,6 @@ export function AccountPopover(props: AccountPopoverProps): JSX.Element {
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Mail className="h-3.5 w-3.5" />
           <span>{profile.provider === 'google' ? 'Signed in with Google' : 'Email login'}</span>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          {profile.emailVerified ? (
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-          ) : (
-            <ShieldAlert className="h-3.5 w-3.5 text-amber-500" />
-          )}
-          <span>{profile.emailVerified ? 'Verified email' : 'Verify your email to use Generate'}</span>
         </div>
       </div>
 

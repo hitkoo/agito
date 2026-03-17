@@ -1,4 +1,4 @@
-import type { AuthSessionState, AuthUserProfile } from '../../shared/auth'
+import type { AuthSessionState, AuthSignUpResult, AuthUserProfile } from '../../shared/auth'
 import { deriveAuthStatus } from '../../shared/auth'
 
 export interface CredentialStore<TSession> {
@@ -14,6 +14,7 @@ export interface AuthProviderAdapter<TSession> {
   signInWithGoogle(): Promise<AuthProviderResult<TSession>>
   signOut(): Promise<void>
   sendPasswordReset(email: string): Promise<void>
+  resendSignUpVerification(email: string): Promise<void>
 }
 
 export interface AuthProviderResult<TSession> {
@@ -25,6 +26,7 @@ interface MainAuthServiceOptions<TSession> {
   credentialStore: CredentialStore<TSession>
   provider: AuthProviderAdapter<TSession>
   getProfile?: (session: TSession) => AuthUserProfile
+  syncProfile?: (session: TSession) => Promise<AuthUserProfile>
 }
 
 const SIGNED_OUT_STATE: AuthSessionState = {
@@ -36,6 +38,7 @@ export class MainAuthService<TSession extends { profile: AuthUserProfile }> {
   private readonly credentialStore: CredentialStore<TSession>
   private readonly provider: AuthProviderAdapter<TSession>
   private readonly getProfile: (session: TSession) => AuthUserProfile
+  private readonly syncProfile?: (session: TSession) => Promise<AuthUserProfile>
   private state: AuthSessionState = SIGNED_OUT_STATE
   private readonly listeners = new Set<(state: AuthSessionState) => void>()
 
@@ -43,6 +46,7 @@ export class MainAuthService<TSession extends { profile: AuthUserProfile }> {
     this.credentialStore = options.credentialStore
     this.provider = options.provider
     this.getProfile = options.getProfile ?? ((session) => session.profile)
+    this.syncProfile = options.syncProfile
   }
 
   getState(): AuthSessionState {
@@ -72,46 +76,48 @@ export class MainAuthService<TSession extends { profile: AuthUserProfile }> {
       return this.state
     }
 
-    await this.credentialStore.setSession(restoredSession)
-    this.state = this.buildState(this.getProfile(restoredSession), true)
-    this.emit()
-    return this.state
+    const syncedSession = await this.syncProfileIfAvailable(restoredSession)
+    return this.adoptSessionResult({
+      session: syncedSession,
+      profile: this.getProfile(syncedSession),
+    })
   }
 
   async signInWithEmail(email: string, password: string): Promise<AuthSessionState> {
     const result = await this.provider.signInWithEmail(email, password)
     if (result.session) {
-      await this.credentialStore.setSession(result.session)
-    } else {
-      await this.credentialStore.clearSession()
+      const syncedSession = await this.syncProfileIfAvailable(result.session)
+      result.session = syncedSession
+      result.profile = this.getProfile(syncedSession)
     }
-    this.state = this.buildState(result.profile, Boolean(result.session))
-    this.emit()
-    return this.state
+
+    const state = await this.adoptSessionResult(result)
+    if (!state.profile && !result.profile.emailVerified) {
+      throw new Error('Verify your email before signing in.')
+    }
+    return state
   }
 
-  async signUpWithEmail(email: string, password: string): Promise<AuthSessionState> {
-    const result = await this.provider.signUpWithEmail(email, password)
-    if (result.session) {
-      await this.credentialStore.setSession(result.session)
-    } else {
-      await this.credentialStore.clearSession()
-    }
-    this.state = this.buildState(result.profile, Boolean(result.session))
+  async signUpWithEmail(email: string, password: string): Promise<AuthSignUpResult> {
+    await this.provider.signUpWithEmail(email, password)
+    await this.provider.signOut().catch(() => undefined)
+    await this.credentialStore.clearSession()
+    this.state = SIGNED_OUT_STATE
     this.emit()
-    return this.state
+    return {
+      status: 'verification_sent',
+      email,
+    }
   }
 
   async signInWithGoogle(): Promise<AuthSessionState> {
     const result = await this.provider.signInWithGoogle()
     if (result.session) {
-      await this.credentialStore.setSession(result.session)
-    } else {
-      await this.credentialStore.clearSession()
+      const syncedSession = await this.syncProfileIfAvailable(result.session)
+      result.session = syncedSession
+      result.profile = this.getProfile(syncedSession)
     }
-    this.state = this.buildState(result.profile, Boolean(result.session))
-    this.emit()
-    return this.state
+    return this.adoptSessionResult(result)
   }
 
   async signOut(): Promise<AuthSessionState> {
@@ -126,6 +132,10 @@ export class MainAuthService<TSession extends { profile: AuthUserProfile }> {
     await this.provider.sendPasswordReset(email)
   }
 
+  async resendSignUpVerification(email: string): Promise<void> {
+    await this.provider.resendSignUpVerification(email)
+  }
+
   private buildState(profile: AuthUserProfile, hasSession: boolean): AuthSessionState {
     return {
       status: deriveAuthStatus({
@@ -137,9 +147,37 @@ export class MainAuthService<TSession extends { profile: AuthUserProfile }> {
     }
   }
 
+  private async adoptSessionResult(result: AuthProviderResult<TSession>): Promise<AuthSessionState> {
+    if (!result.session || !result.profile.emailVerified) {
+      await this.provider.signOut().catch(() => undefined)
+      await this.credentialStore.clearSession()
+      this.state = SIGNED_OUT_STATE
+      this.emit()
+      return this.state
+    }
+
+    await this.credentialStore.setSession(result.session)
+    this.state = this.buildState(result.profile, true)
+    this.emit()
+    return this.state
+  }
+
   private emit(): void {
     for (const listener of this.listeners) {
       listener(this.state)
+    }
+  }
+
+  private async syncProfileIfAvailable(session: TSession): Promise<TSession> {
+    if (!this.syncProfile) return session
+    try {
+      const profile = await this.syncProfile(session)
+      return {
+        ...session,
+        profile,
+      }
+    } catch {
+      return session
     }
   }
 }

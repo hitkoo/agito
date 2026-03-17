@@ -65,6 +65,7 @@ export const IPC_COMMANDS = {
   AUTH_SIGN_IN_EMAIL: 'auth:sign-in-email',
   AUTH_SIGN_IN_GOOGLE: 'auth:sign-in-google',
   AUTH_SIGN_OUT: 'auth:sign-out',
+  AUTH_RESEND_SIGNUP_VERIFICATION: 'auth:resend-signup-verification',
   AUTH_SEND_PASSWORD_RESET: 'auth:send-password-reset',
   AUTH_REFRESH_SESSION: 'auth:refresh-session',
   // Terminal dock detach/attach
