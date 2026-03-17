@@ -1,5 +1,11 @@
 import { create } from 'zustand'
 import type { TerminalDockSyncState } from '../../../shared/types'
+import { IPC_COMMANDS } from '../../../shared/ipc-channels'
+import {
+  createEmptyDockLayout,
+  getActiveCharacterId,
+  type DockLayout,
+} from '../../../shared/terminal-dock-layout'
 
 export type AppTab = 'runtime' | 'layout' | 'generate' | 'characters' | 'settings'
 export type ThemeMode = 'system' | 'light' | 'dark'
@@ -13,29 +19,19 @@ interface ContextMenuState {
 interface TerminalDockState {
   visible: boolean
   minimized: boolean
-  detached: boolean
+  focusedPaneId: string
   activeCharacterId: string | null
-  ownerWindow: 'attached' | 'detached'
-  detachedReady: boolean
-  position: { x: number; y: number }
-  size: { width: number; height: number }
+  layout: DockLayout
 }
 
 interface UIStore {
-  // Tab navigation
   activeTab: AppTab
   sidebarExpanded: boolean
-
-  // Runtime mode
   selectedCharacterId: string | null
   panelWidth: number
   contextMenu: ContextMenuState | null
-
-  // Terminal dock
   terminalDock: TerminalDockState
   terminalRefreshKey: Record<string, number>
-
-  // Layout mode
   draggingManifestId: string | null
   selectedLayoutItem: { type: 'furniture'; id: string } | { type: 'character'; id: string } | null
   isDraggingItem: boolean
@@ -45,20 +41,19 @@ interface UIStore {
     x: number
     y: number
   } | null
-  layoutClipboard: {
-    type: 'furniture'
-    manifestId: string
-    footprint: { w: number; h: number }
-  } | {
-    type: 'character'
-    id: string
-    name: string
-  } | null
-
-  // Theme
+  layoutClipboard:
+    | {
+        type: 'furniture'
+        manifestId: string
+        footprint: { w: number; h: number }
+      }
+    | {
+        type: 'character'
+        id: string
+        name: string
+      }
+    | null
   theme: ThemeMode
-
-  // Actions
   setActiveTab: (tab: AppTab) => void
   toggleSidebar: () => void
   selectCharacter: (id: string | null) => void
@@ -72,49 +67,37 @@ interface UIStore {
   closeLayoutContextMenu: () => void
   setLayoutClipboard: (item: UIStore['layoutClipboard']) => void
   setTheme: (theme: ThemeMode) => void
-
-  // Terminal dock actions
   openTerminalDock: (characterId: string) => void
   closeTerminalDock: () => void
-  minimizeTerminalDock: () => void
+  minimizeTerminalDock: (height?: number) => void
   restoreTerminalDock: () => void
-  setDockActiveCharacter: (characterId: string | null) => void
-  setDockPosition: (position: { x: number; y: number }) => void
-  setDockSize: (size: { width: number; height: number }) => void
-  setDockDetached: (detached: boolean) => void
-  setDockMinimized: (minimized: boolean) => void
+  setTerminalDockLayout: (layout: DockLayout) => void
   syncTerminalDock: (state: TerminalDockSyncState) => void
   bumpTerminalRefreshKey: (characterId: string) => void
 }
 
+const initialDockLayout = createEmptyDockLayout()
+
 export const useUIStore = create<UIStore>((set) => ({
   activeTab: 'runtime',
   sidebarExpanded: false,
-
   selectedCharacterId: null,
   panelWidth: 50,
   contextMenu: null,
-
+  terminalDock: {
+    visible: false,
+    minimized: false,
+    focusedPaneId: initialDockLayout.focusedPaneId,
+    activeCharacterId: null,
+    layout: initialDockLayout,
+  },
+  terminalRefreshKey: {},
   draggingManifestId: null,
   selectedLayoutItem: null,
   isDraggingItem: false,
   layoutContextMenu: null,
   layoutClipboard: null,
-
   theme: 'dark',
-  terminalRefreshKey: {},
-
-  terminalDock: {
-    visible: false,
-    minimized: false,
-    detached: false,
-    activeCharacterId: null,
-    ownerWindow: 'attached',
-    detachedReady: false,
-    position: { x: -1, y: -1 }, // -1 = auto-center on first open
-    size: { width: 720, height: 520 },
-  },
-
   setActiveTab: (tab) => set({ activeTab: tab, contextMenu: null, selectedLayoutItem: null }),
   toggleSidebar: () => set((s) => ({ sidebarExpanded: !s.sidebarExpanded })),
   selectCharacter: (id) => set({ selectedCharacterId: id }),
@@ -128,52 +111,44 @@ export const useUIStore = create<UIStore>((set) => ({
   closeLayoutContextMenu: () => set({ layoutContextMenu: null }),
   setLayoutClipboard: (item) => set({ layoutClipboard: item }),
   setTheme: (theme) => set({ theme }),
+  openTerminalDock: (characterId) => {
+    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_SHOW, { characterId })
+  },
+  closeTerminalDock: () => {
+    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_HIDE)
+  },
+  minimizeTerminalDock: (height) => {
+    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_MINIMIZE, height ? { height } : undefined)
+  },
+  restoreTerminalDock: () => {
+    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_RESTORE)
+  },
+  setTerminalDockLayout: (layout) =>
+    set((s) => {
+      void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_SET_LAYOUT, {
+        layout,
+        focusedPaneId: layout.focusedPaneId,
+        activeCharacterId: getActiveCharacterId(layout),
+      })
 
-  openTerminalDock: (characterId) =>
-    set((s) => ({
-      terminalDock: { ...s.terminalDock, visible: true, minimized: false, activeCharacterId: characterId },
-    })),
-  closeTerminalDock: () =>
-    set((s) => ({
-      terminalDock: { ...s.terminalDock, visible: false },
-    })),
-  minimizeTerminalDock: () =>
-    set((s) => ({
-      terminalDock: { ...s.terminalDock, minimized: true },
-    })),
-  restoreTerminalDock: () =>
-    set((s) => ({
-      terminalDock: { ...s.terminalDock, minimized: false },
-    })),
-  setDockActiveCharacter: (characterId) =>
-    set((s) => ({
-      terminalDock: { ...s.terminalDock, activeCharacterId: characterId },
-    })),
-  setDockPosition: (position) =>
-    set((s) => ({
-      terminalDock: { ...s.terminalDock, position },
-    })),
-  setDockSize: (size) =>
-    set((s) => ({
-      terminalDock: { ...s.terminalDock, size },
-    })),
-  setDockDetached: (detached) =>
-    set((s) => ({
-      terminalDock: { ...s.terminalDock, detached },
-    })),
-  setDockMinimized: (minimized) =>
-    set((s) => ({
-      terminalDock: { ...s.terminalDock, minimized },
-    })),
+      return {
+        terminalDock: {
+          ...s.terminalDock,
+          layout,
+          focusedPaneId: layout.focusedPaneId,
+          activeCharacterId: getActiveCharacterId(layout),
+        },
+      }
+    }),
   syncTerminalDock: (state) =>
     set((s) => ({
       terminalDock: {
         ...s.terminalDock,
-        detached: state.detached,
+        visible: state.visible,
         minimized: state.minimized,
+        focusedPaneId: state.focusedPaneId,
         activeCharacterId: state.activeCharacterId,
-        ownerWindow: state.ownerWindow,
-        detachedReady: state.detachedReady,
+        layout: state.layout,
       },
     })),
   bumpTerminalRefreshKey: (characterId) =>

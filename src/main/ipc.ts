@@ -5,6 +5,7 @@ import { join, basename, extname } from 'path'
 import { homedir } from 'os'
 import { IPC_COMMANDS, IPC_EVENTS } from '../shared/ipc-channels'
 import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, AssetGenerateRequest, AssetGenerateResult, ScannedSession } from '../shared/types'
+import { upsertSessionMappingOnResume } from '../shared/session-resume'
 import { canAccessGenerate, type AuthSessionState } from '../shared/auth'
 import { hasSupabasePublicConfig, publicConfig } from '../shared/public-config'
 import type { AgitoStore } from './store'
@@ -18,6 +19,15 @@ import { MainAuthService, type AuthProviderAdapter, type AuthProviderResult } fr
 import { createCredentialStore, type StoredAuthSession } from './auth/credential-store'
 import { SupabaseAuthProvider } from './auth/supabase-auth-provider'
 import type { DeepLinkOAuthCallbackCoordinator } from './auth/oauth-callback'
+import {
+  type CodexSessionIndexEntry,
+  extractClaudeSessionLabelsFromHistory,
+  extractClaudeSessionMetadata,
+  extractCodexSessionIndexEntries,
+  getPreferredClaudeSessionLabel,
+  mergeCodexScannedSessions,
+  scanCodexSessionFiles,
+} from './session-scan'
 
 // 16ms PTY output batching (~60fps) to prevent xterm.js write() flooding
 const PTY_BATCH_MS = 16
@@ -496,22 +506,18 @@ export function registerIPCHandlers(
       spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
 
       const now = new Date().toISOString()
-      if (existingMapping) {
-        store.saveSessions(sessions.map((s) =>
-          s.sessionId === sessionId ? { ...s, lastActiveAt: now } : s
-        ))
-      } else {
-        // Create new mapping for externally scanned sessions
-        sessions.push({
+      store.saveSessions(
+        upsertSessionMappingOnResume({
+          sessions,
           characterId,
           sessionId,
-          engineType,
           workingDirectory,
-          createdAt: now,
-          lastActiveAt: now,
+          engineType,
+          now,
+          overwriteExistingMetadata:
+            args.workingDirectory !== undefined || args.engineType !== undefined,
         })
-        store.saveSessions(sessions)
-      }
+      )
 
       const updatedCharacters = characters.map((c) =>
         c.id === characterId
@@ -557,6 +563,11 @@ export function registerIPCHandlers(
     // Scan Claude Code sessions: ~/.claude/projects/<encoded-dir>/*.jsonl
     try {
       const claudeProjectsDir = join(homedir(), '.claude', 'projects')
+      const claudeHistoryLabels = (() => {
+        const historyPath = join(homedir(), '.claude', 'history.jsonl')
+        if (!existsSync(historyPath)) return new Map<string, string>()
+        return extractClaudeSessionLabelsFromHistory(readFileSync(historyPath, 'utf-8'))
+      })()
       if (existsSync(claudeProjectsDir)) {
         const dirs = readdirSync(claudeProjectsDir, { withFileTypes: true })
           .filter((d) => d.isDirectory())
@@ -570,16 +581,19 @@ export function registerIPCHandlers(
             for (const file of files) {
               try {
                 const filePath = join(dirPath, file)
-                const firstLine = readFileSync(filePath, 'utf-8').split('\n')[0]
-                if (!firstLine) continue
-                const meta = JSON.parse(firstLine)
+                const meta = extractClaudeSessionMetadata(filePath)
+                if (!meta) continue
                 if (!meta.sessionId) continue
                 const stat = statSync(filePath)
                 results.push({
                   sessionId: meta.sessionId,
                   engineType: 'claude-code',
                   workingDirectory: meta.cwd || workDir,
-                  label: meta.gitBranch || basename(workDir),
+                  label: getPreferredClaudeSessionLabel({
+                    historyLabel: claudeHistoryLabels.get(meta.sessionId) ?? null,
+                    gitBranch: meta.gitBranch,
+                    workingDirectory: meta.cwd || workDir,
+                  }),
                   createdAt: meta.timestamp || stat.birthtime.toISOString(),
                   lastActiveAt: stat.mtime.toISOString(),
                 })
@@ -596,8 +610,31 @@ export function registerIPCHandlers(
       // Claude CLI not installed
     }
 
-    // Scan Codex sessions: ~/.codex/state_5.sqlite (SoT), fallback to session_index.jsonl
-    let codexScanned = false
+    // Scan Codex sessions: prefer sqlite, supplement with session files, fallback to session_index.jsonl
+    const codexResults: ScannedSession[] = []
+    let codexSqliteSessions: ScannedSession[] = []
+    let codexFileSessions: ScannedSession[] = []
+    let codexIndexSessions: ScannedSession[] = []
+    let codexIndexEntries = new Map<string, CodexSessionIndexEntry>()
+
+    try {
+      const codexIndex = join(homedir(), '.codex', 'session_index.jsonl')
+      if (existsSync(codexIndex)) {
+        const indexContent = readFileSync(codexIndex, 'utf-8')
+        codexIndexEntries = extractCodexSessionIndexEntries(indexContent)
+        codexIndexSessions = Array.from(codexIndexEntries.values()).map((entry) => ({
+          sessionId: entry.sessionId,
+          engineType: 'codex',
+          workingDirectory: entry.cwd || '',
+          label: entry.threadName || entry.sessionId.slice(0, 8),
+          createdAt: entry.updatedAt || '',
+          lastActiveAt: entry.updatedAt || '',
+        }))
+      }
+    } catch {
+      // session_index is optional and stale-prone; ignore parse failures
+    }
+
     try {
       const codexDb = join(homedir(), '.codex', 'state_5.sqlite')
       if (existsSync(codexDb)) {
@@ -609,7 +646,7 @@ export function registerIPCHandlers(
         )
         while (stmt.step()) {
           const row = stmt.getAsObject()
-          results.push({
+          codexSqliteSessions.push({
             sessionId: String(row.id),
             engineType: 'codex',
             workingDirectory: String(row.cwd || ''),
@@ -620,39 +657,26 @@ export function registerIPCHandlers(
         }
         stmt.free()
         db.close()
-        codexScanned = true
       }
     } catch {
-      // SQLite read failed, try fallback
+      // SQLite read failed; session files may still contain newer sessions
     }
 
-    // Fallback: session_index.jsonl (no cwd field)
-    if (!codexScanned) {
-      try {
-        const codexIndex = join(homedir(), '.codex', 'session_index.jsonl')
-        if (existsSync(codexIndex)) {
-          const lines = readFileSync(codexIndex, 'utf-8').split('\n').filter(Boolean)
-          for (const line of lines) {
-            try {
-              const entry = JSON.parse(line)
-              if (!entry.id) continue
-              results.push({
-                sessionId: entry.id,
-                engineType: 'codex',
-                workingDirectory: entry.cwd || '',
-                label: entry.thread_name || entry.id.slice(0, 8),
-                createdAt: entry.updated_at || '',
-                lastActiveAt: entry.updated_at,
-              })
-            } catch {
-              // skip unparseable lines
-            }
-          }
-        }
-      } catch {
-        // Codex CLI not installed
+    try {
+      const codexSessionsDir = join(homedir(), '.codex', 'sessions')
+      if (existsSync(codexSessionsDir)) {
+        codexFileSessions = scanCodexSessionFiles(codexSessionsDir, codexIndexEntries)
       }
+    } catch {
+      // Session file scan is best-effort only.
     }
+
+    codexResults.push(...mergeCodexScannedSessions({
+      sqliteSessions: codexSqliteSessions,
+      fileSessions: codexFileSessions,
+      indexSessions: codexIndexSessions,
+    }))
+    results.push(...codexResults)
 
     // Sort by lastActiveAt descending (most recent first)
     results.sort((a, b) => {

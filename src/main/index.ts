@@ -1,10 +1,23 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIPCHandlers } from './ipc'
 import { AgitoStore } from './store'
 import { IPC_COMMANDS, IPC_DOCK_EVENTS } from '../shared/ipc-channels'
 import type { TerminalDockSyncState } from '../shared/types'
+import {
+  createEmptyDockLayout,
+  ensureCharacterSurface,
+  getActiveCharacterId,
+  listOpenCharacterIds,
+  type DockLayout,
+} from '../shared/terminal-dock-layout'
+import {
+  clampTerminalDockBarHeight,
+  getAnchoredDockBounds,
+  getFittedMinimizedDockWidth,
+  TERMINAL_DOCK_BAR_DEFAULT_HEIGHT,
+} from '../shared/terminal-dock-bar'
 import { DeepLinkOAuthCallbackCoordinator } from './auth/oauth-callback'
 
 let mainWindow: BrowserWindow | null = null
@@ -79,15 +92,17 @@ app.whenReady().then(() => {
 
   createWindow()
 
-  // --- Terminal Dock Detach/Attach ---
+  // --- Terminal Dock ---
 
   let savedDockSize = { width: 720, height: 520 }
+  let savedMinimizedDockHeight = TERMINAL_DOCK_BAR_DEFAULT_HEIGHT
+  const initialDockLayout = createEmptyDockLayout()
   let dockSyncState: TerminalDockSyncState = {
-    detached: false,
+    visible: false,
     minimized: false,
+    focusedPaneId: initialDockLayout.focusedPaneId,
     activeCharacterId: null,
-    ownerWindow: 'attached',
-    detachedReady: false,
+    layout: initialDockLayout,
   }
 
   const syncDockState = (targets = BrowserWindow.getAllWindows()): void => {
@@ -98,59 +113,76 @@ app.whenReady().then(() => {
     }
   }
 
-  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_GET_STATE, () => dockSyncState)
-  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_READY, () => {
-    if (detachedTerminalWindow && !detachedTerminalWindow.isDestroyed()) {
-      detachedTerminalWindow.show()
-      detachedTerminalWindow.focus()
-    }
+  const updateDockLayout = (layout: DockLayout): void => {
     dockSyncState = {
       ...dockSyncState,
-      ownerWindow: 'detached',
-      detachedReady: true,
+      layout,
+      focusedPaneId: layout.focusedPaneId,
+      activeCharacterId: getActiveCharacterId(layout),
     }
+  }
+
+  const applyMinimizedDockBounds = (): void => {
+    if (!detachedTerminalWindow || detachedTerminalWindow.isDestroyed()) return
+
+    const currentBounds = detachedTerminalWindow.getBounds()
+    const display = screen.getDisplayMatching(currentBounds)
+    const workArea = display.workArea
+    const maxWidth = Math.max(96, display.workArea.width - 32)
+    const nextHeight = clampTerminalDockBarHeight(savedMinimizedDockHeight)
+    const nextWidth = getFittedMinimizedDockWidth({
+      characterCount: listOpenCharacterIds(dockSyncState.layout).length,
+      height: nextHeight,
+      maxWidth,
+    })
+
+    detachedTerminalWindow.setBounds(
+      getAnchoredDockBounds({
+        anchorBounds: currentBounds,
+        nextWidth,
+        nextHeight,
+        workArea,
+      }),
+    )
+  }
+
+  const minimizeDetachedDockWindow = (options?: { height?: number }): void => {
+    if (!detachedTerminalWindow || detachedTerminalWindow.isDestroyed()) return
+
+    const bounds = detachedTerminalWindow.getBounds()
+    savedDockSize = { width: bounds.width, height: bounds.height }
+    if (typeof options?.height === 'number') {
+      savedMinimizedDockHeight = clampTerminalDockBarHeight(options.height)
+    }
+    detachedTerminalWindow.setAlwaysOnTop(true, 'floating')
+    detachedTerminalWindow.setResizable(false)
+    applyMinimizedDockBounds()
+    dockSyncState = { ...dockSyncState, visible: true, minimized: true }
     syncDockState()
-  })
+  }
 
-  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_SET_ACTIVE_CHARACTER, (_, activeCharacterId: string | null) => {
-    dockSyncState = { ...dockSyncState, activeCharacterId }
-    syncDockState()
-  })
+  const restoreDetachedDockWindow = (): void => {
+    if (!detachedTerminalWindow || detachedTerminalWindow.isDestroyed()) return
 
-  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_DETACH, (_, state: { width?: number; height?: number; activeCharacterId?: string }) => {
-    if (detachedTerminalWindow) {
-      const wasMinimized = dockSyncState.minimized
-      dockSyncState = {
-        ...dockSyncState,
-        detached: true,
-        minimized: false,
-        activeCharacterId: state.activeCharacterId ?? dockSyncState.activeCharacterId,
-        ownerWindow: 'attached',
-        detachedReady: false,
-      }
-      syncDockState([detachedTerminalWindow, ...BrowserWindow.getAllWindows().filter((win) => win !== detachedTerminalWindow)])
-      detachedTerminalWindow.setAlwaysOnTop(false)
-      if (wasMinimized) {
-        detachedTerminalWindow.setSize(savedDockSize.width, savedDockSize.height)
-      }
-      return
-    }
+    const currentBounds = detachedTerminalWindow.getBounds()
+    const display = screen.getDisplayMatching(currentBounds)
+    detachedTerminalWindow.setBounds(
+      getAnchoredDockBounds({
+        anchorBounds: currentBounds,
+        nextWidth: savedDockSize.width,
+        nextHeight: savedDockSize.height,
+        workArea: display.workArea,
+      }),
+    )
+    detachedTerminalWindow.setAlwaysOnTop(false)
+    detachedTerminalWindow.setResizable(true)
+    dockSyncState = { ...dockSyncState, minimized: false }
+  }
 
-    const width = state.width || 720
-    const height = state.height || 520
-    savedDockSize = { width, height }
-    dockSyncState = {
-      detached: true,
-      minimized: false,
-      activeCharacterId: state.activeCharacterId ?? dockSyncState.activeCharacterId,
-      ownerWindow: 'attached',
-      detachedReady: false,
-    }
-    syncDockState(BrowserWindow.getAllWindows())
-
-    detachedTerminalWindow = new BrowserWindow({
-      width,
-      height,
+  const createDetachedDockWindow = (): BrowserWindow => {
+    const dockWindow = new BrowserWindow({
+      width: savedDockSize.width,
+      height: savedDockSize.height,
       show: false,
       alwaysOnTop: false,
       frame: false,
@@ -166,59 +198,124 @@ app.whenReady().then(() => {
       },
     })
 
-    detachedTerminalWindow.webContents.once('did-finish-load', () => {
-      if (detachedTerminalWindow && !detachedTerminalWindow.isDestroyed()) {
-        syncDockState([detachedTerminalWindow])
+    dockWindow.webContents.once('did-finish-load', () => {
+      syncDockState([dockWindow])
+    })
+
+    dockWindow.webContents.on('before-input-event', (event, input) => {
+      if (
+        input.type === 'keyDown' &&
+        input.meta &&
+        !input.alt &&
+        !input.control &&
+        !input.shift &&
+        input.key.toLowerCase() === 'w'
+      ) {
+        event.preventDefault()
+        if (!dockSyncState.minimized) {
+          minimizeDetachedDockWindow()
+        }
       }
     })
 
-    loadRenderer(detachedTerminalWindow, 'terminal-dock')
+    dockWindow.once('ready-to-show', () => {
+      if (dockSyncState.visible && !dockWindow.isDestroyed()) {
+        dockWindow.show()
+        dockWindow.focus()
+      }
+    })
 
-    detachedTerminalWindow.on('closed', () => {
+    dockWindow.on('closed', () => {
       detachedTerminalWindow = null
       dockSyncState = {
         ...dockSyncState,
-        detached: false,
+        visible: false,
         minimized: false,
-        ownerWindow: 'attached',
-        detachedReady: false,
       }
       syncDockState()
     })
+
+    loadRenderer(dockWindow, 'terminal-dock')
+    return dockWindow
+  }
+
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_GET_STATE, () => dockSyncState)
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_SHOW, (_, args?: { characterId?: string }) => {
+    const wasMinimized = dockSyncState.minimized
+
+    if (args?.characterId) {
+      updateDockLayout(ensureCharacterSurface(dockSyncState.layout, args.characterId))
+    }
+
+    dockSyncState = {
+      ...dockSyncState,
+      visible: true,
+      minimized: false,
+    }
+
+    if (!detachedTerminalWindow || detachedTerminalWindow.isDestroyed()) {
+      detachedTerminalWindow = createDetachedDockWindow()
+      syncDockState(BrowserWindow.getAllWindows())
+      return
+    }
+
+    if (wasMinimized) {
+      restoreDetachedDockWindow()
+    } else {
+      detachedTerminalWindow.setAlwaysOnTop(false)
+      detachedTerminalWindow.setResizable(true)
+      detachedTerminalWindow.setSize(savedDockSize.width, savedDockSize.height)
+    }
+    detachedTerminalWindow.show()
+    detachedTerminalWindow.focus()
+    syncDockState()
   })
 
-  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_ATTACH, () => {
-    if (detachedTerminalWindow) {
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_HIDE, () => {
+    dockSyncState = {
+      ...dockSyncState,
+      visible: false,
+      minimized: false,
+    }
+    syncDockState()
+    detachedTerminalWindow?.close()
+  })
+
+  ipcMain.handle(
+    IPC_COMMANDS.TERMINAL_DOCK_SET_LAYOUT,
+    (_, state: { layout: DockLayout; focusedPaneId: string; activeCharacterId: string | null }) => {
       dockSyncState = {
         ...dockSyncState,
-        detached: false,
-        minimized: false,
-        ownerWindow: 'attached',
-        detachedReady: false,
+        layout: state.layout,
+        focusedPaneId: state.focusedPaneId,
+        activeCharacterId: state.activeCharacterId,
+      }
+      if (dockSyncState.minimized) {
+        applyMinimizedDockBounds()
       }
       syncDockState()
-      detachedTerminalWindow.close()
     }
-  })
+  )
 
   // PiP minimize/restore
-  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_MINIMIZE, () => {
-    if (!detachedTerminalWindow) return
-    const bounds = detachedTerminalWindow.getBounds()
-    savedDockSize = { width: bounds.width, height: bounds.height }
-    detachedTerminalWindow.setSize(320, 48)
-    detachedTerminalWindow.setAlwaysOnTop(true, 'floating')
-    dockSyncState = { ...dockSyncState, minimized: true }
-    syncDockState()
+  ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_MINIMIZE, (_, args?: { height?: number }) => {
+    minimizeDetachedDockWindow(args)
   })
 
   ipcMain.handle(IPC_COMMANDS.TERMINAL_DOCK_RESTORE, () => {
-    if (!detachedTerminalWindow) return
-    detachedTerminalWindow.setSize(savedDockSize.width, savedDockSize.height)
-    detachedTerminalWindow.setAlwaysOnTop(false)
-    dockSyncState = { ...dockSyncState, minimized: false }
+    restoreDetachedDockWindow()
     syncDockState()
   })
+
+  ipcMain.handle(
+    IPC_COMMANDS.TERMINAL_DOCK_SET_MINIMIZED_HEIGHT,
+    (_, args: { height: number }) => {
+      savedMinimizedDockHeight = clampTerminalDockBarHeight(args.height)
+      if (dockSyncState.minimized) {
+        applyMinimizedDockBounds()
+      }
+    }
+  )
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

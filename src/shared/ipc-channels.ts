@@ -68,14 +68,14 @@ export const IPC_COMMANDS = {
   AUTH_RESEND_SIGNUP_VERIFICATION: 'auth:resend-signup-verification',
   AUTH_SEND_PASSWORD_RESET: 'auth:send-password-reset',
   AUTH_REFRESH_SESSION: 'auth:refresh-session',
-  // Terminal dock detach/attach
-  TERMINAL_DOCK_DETACH: 'terminal-dock:detach',
-  TERMINAL_DOCK_ATTACH: 'terminal-dock:attach',
+  // Terminal dock
+  TERMINAL_DOCK_SHOW: 'terminal-dock:show',
+  TERMINAL_DOCK_HIDE: 'terminal-dock:hide',
   TERMINAL_DOCK_MINIMIZE: 'terminal-dock:minimize',
   TERMINAL_DOCK_RESTORE: 'terminal-dock:restore',
   TERMINAL_DOCK_GET_STATE: 'terminal-dock:get-state',
-  TERMINAL_DOCK_SET_ACTIVE_CHARACTER: 'terminal-dock:set-active-character',
-  TERMINAL_DOCK_READY: 'terminal-dock:ready',
+  TERMINAL_DOCK_SET_LAYOUT: 'terminal-dock:set-layout',
+  TERMINAL_DOCK_SET_MINIMIZED_HEIGHT: 'terminal-dock:set-minimized-height',
 } as const
 
 // Terminal dock sync event (Main → Renderer)

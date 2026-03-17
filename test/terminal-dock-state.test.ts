@@ -3,99 +3,40 @@ import {
   buildInitialTerminalReplay,
   canHydrateTerminalViewport,
   getTerminalDockRenderMode,
-  isTerminalDockOwner,
+  resolveSessionResumeEngine,
   shouldScheduleTrailingTerminalResize,
   shouldKeepTerminalLoading,
   shouldRenderAssignedTerminal,
   shouldSendPtyResize,
 } from '../src/shared/terminal-dock-state'
+import type { EngineType } from '../src/shared/types'
 
 describe('getTerminalDockRenderMode', () => {
-  test('renders attached dock only in attached visible state', () => {
+  test('renders hidden when the dock is not visible', () => {
     expect(
       getTerminalDockRenderMode({
-        detachedMode: false,
-        detached: false,
-        visible: true,
-        minimized: false,
-        ownerWindow: 'attached',
-        detachedReady: false,
-      })
-    ).toBe('attached-dock')
-  })
-
-  test('keeps attached dock visible until detached window is ready to take over', () => {
-    expect(
-      getTerminalDockRenderMode({
-        detachedMode: false,
-        detached: true,
-        visible: true,
-        minimized: false,
-        ownerWindow: 'attached',
-        detachedReady: false,
-      })
-    ).toBe('attached-dock')
-  })
-
-  test('keeps attached dock mounted as hidden warm standby after detached handoff', () => {
-    expect(
-      getTerminalDockRenderMode({
-        detachedMode: false,
-        detached: true,
-        visible: true,
-        minimized: false,
-        ownerWindow: 'detached',
-        detachedReady: true,
-      })
-    ).toBe('attached-dock-hidden-warm')
-  })
-
-  test('shows detached dock during handoff bootstrap before it becomes owner', () => {
-    expect(
-      getTerminalDockRenderMode({
-        detachedMode: true,
-        detached: true,
-        visible: true,
-        minimized: false,
-        ownerWindow: 'attached',
-        detachedReady: false,
-      })
-    ).toBe('detached-dock')
-  })
-
-  test('hides attached dock only after detached window owns the terminal', () => {
-    expect(
-      getTerminalDockRenderMode({
-        detachedMode: false,
-        detached: true,
         visible: false,
         minimized: false,
-        ownerWindow: 'detached',
-        detachedReady: true,
       })
     ).toBe('hidden')
   })
 
-  test('shows detached minimized bar instead of full dock', () => {
+  test('renders the full dock when visible and not minimized', () => {
     expect(
       getTerminalDockRenderMode({
-        detachedMode: true,
-        detached: true,
+        visible: true,
+        minimized: false,
+      })
+    ).toBe('dock')
+  })
+
+  test('renders the minimized bar when visible and minimized', () => {
+    expect(
+      getTerminalDockRenderMode({
         visible: true,
         minimized: true,
-        ownerWindow: 'detached',
-        detachedReady: true,
       })
-    ).toBe('detached-minimized-bar')
-  })
-})
-
-describe('isTerminalDockOwner', () => {
-  test('grants ownership to the window selected by dock sync state', () => {
-    expect(isTerminalDockOwner({ detachedMode: false, ownerWindow: 'attached' })).toBe(true)
-    expect(isTerminalDockOwner({ detachedMode: false, ownerWindow: 'detached' })).toBe(false)
-    expect(isTerminalDockOwner({ detachedMode: true, ownerWindow: 'attached' })).toBe(false)
-    expect(isTerminalDockOwner({ detachedMode: true, ownerWindow: 'detached' })).toBe(true)
+    ).toBe('minimized-bar')
   })
 })
 
@@ -228,20 +169,18 @@ describe('shouldKeepTerminalLoading', () => {
 })
 
 describe('shouldSendPtyResize', () => {
-  test('rejects resize from inactive or zero-sized terminal containers', () => {
+  test('rejects resize from zero-sized terminal containers', () => {
     expect(
       shouldSendPtyResize({
-        isActiveOwner: false,
         width: 800,
         height: 500,
         cols: 120,
         rows: 40,
       })
-    ).toBe(false)
+    ).toBe(true)
 
     expect(
       shouldSendPtyResize({
-        isActiveOwner: true,
         width: 0,
         height: 500,
         cols: 120,
@@ -251,7 +190,6 @@ describe('shouldSendPtyResize', () => {
 
     expect(
       shouldSendPtyResize({
-        isActiveOwner: true,
         width: 800,
         height: 500,
         cols: 0,
@@ -260,10 +198,9 @@ describe('shouldSendPtyResize', () => {
     ).toBe(false)
   })
 
-  test('allows resize only for active owner with positive dimensions', () => {
+  test('allows resize for visible terminals with positive dimensions', () => {
     expect(
       shouldSendPtyResize({
-        isActiveOwner: true,
         width: 800,
         height: 500,
         cols: 120,
@@ -277,5 +214,35 @@ describe('shouldScheduleTrailingTerminalResize', () => {
   test('enables trailing resize resend only for codex', () => {
     expect(shouldScheduleTrailingTerminalResize('codex')).toBe(true)
     expect(shouldScheduleTrailingTerminalResize('claude-code')).toBe(false)
+  })
+})
+
+describe('resolveSessionResumeEngine', () => {
+  test('prefers the scanned session engine over UI fallback state', () => {
+    expect(
+      resolveSessionResumeEngine({
+        scannedEngineType: 'claude-code',
+        selectedEngine: 'codex',
+        characterEngine: null,
+      })
+    ).toBe('claude-code')
+  })
+
+  test('falls back to selected engine and then character engine', () => {
+    expect(
+      resolveSessionResumeEngine({
+        scannedEngineType: null,
+        selectedEngine: 'codex',
+        characterEngine: null,
+      })
+    ).toBe('codex')
+
+    expect(
+      resolveSessionResumeEngine({
+        scannedEngineType: null,
+        selectedEngine: null,
+        characterEngine: 'claude-code' as EngineType,
+      })
+    ).toBe('claude-code')
   })
 })

@@ -16,24 +16,18 @@ import { electronTerminalTransport } from './terminal-transport'
 
 interface TerminalViewProps {
   characterId: string
-  isActiveOwner: boolean
   engine: EngineType | null
 }
 
 const CODEX_TRAILING_RESIZE_MS = 180
 
-export function TerminalView({ characterId, isActiveOwner, engine }: TerminalViewProps): ReactElement {
+export function TerminalView({ characterId, engine }: TerminalViewProps): ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
-  const ownerRef = useRef(isActiveOwner)
   const loadingRef = useRef(true)
   const syncViewportRef = useRef<(focusTerminal: boolean) => void>(() => {})
   const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    ownerRef.current = isActiveOwner
-  }, [isActiveOwner])
 
   useEffect(() => {
     setLoading(true)
@@ -118,9 +112,8 @@ export function TerminalView({ characterId, isActiveOwner, engine }: TerminalVie
       }
     }
 
-    const sendPtyResizeIfOwner = (measurement: { width: number; height: number; cols: number; rows: number }): void => {
+    const sendPtyResize = (measurement: { width: number; height: number; cols: number; rows: number }): void => {
       if (!shouldSendPtyResize({
-        isActiveOwner: ownerRef.current,
         width: measurement.width,
         height: measurement.height,
         cols: measurement.cols,
@@ -137,7 +130,6 @@ export function TerminalView({ characterId, isActiveOwner, engine }: TerminalVie
       }
       trailingResizeTimer = window.setTimeout(() => {
         trailingResizeTimer = null
-        if (!ownerRef.current) return
         void electronTerminalTransport.resize(characterId, measurement.cols, measurement.rows)
       }, CODEX_TRAILING_RESIZE_MS)
     }
@@ -170,9 +162,9 @@ export function TerminalView({ characterId, isActiveOwner, engine }: TerminalVie
         hydrating = false
         const measurement = fitToContainer()
         if (measurement) {
-          sendPtyResizeIfOwner(measurement)
+          sendPtyResize(measurement)
         }
-        if (focusTerminal && ownerRef.current) {
+        if (focusTerminal) {
           terminalRef.current?.focus()
         }
         terminalRef.current?.scrollToBottom()
@@ -189,9 +181,9 @@ export function TerminalView({ characterId, isActiveOwner, engine }: TerminalVie
       if (hydrated) {
         const measurement = fitToContainer()
         if (measurement) {
-          sendPtyResizeIfOwner(measurement)
+          sendPtyResize(measurement)
         }
-        if (focusTerminal && ownerRef.current) {
+        if (focusTerminal) {
           terminalRef.current?.focus()
         }
         return
@@ -244,7 +236,6 @@ export function TerminalView({ characterId, isActiveOwner, engine }: TerminalVie
     })
 
     const dataDisposable = terminal.onData((data) => {
-      if (!ownerRef.current) return
       void electronTerminalTransport.write(characterId, data)
     })
 
@@ -288,12 +279,10 @@ export function TerminalView({ characterId, isActiveOwner, engine }: TerminalVie
   }, [characterId])
 
   useEffect(() => {
-    if (!isActiveOwner) return
-
     requestAnimationFrame(() => {
       syncViewportRef.current(true)
     })
-  }, [characterId, isActiveOwner])
+  }, [characterId])
 
   return (
     <div className="h-full w-full min-h-0 overflow-hidden relative bg-background">

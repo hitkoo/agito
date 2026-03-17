@@ -285,26 +285,18 @@ function ErrorEffect({ w, h, color }: { w: number; h: number; color: number }): 
   )
 }
 
-// Done: green shape + "✓" badge, visual transitions to idle after 3s
+// Done: unread completion stays visually done until runtime clears it
 function DoneEffect({ w, h, color }: { w: number; h: number; color: number }): ReactElement {
-  const [showCheck, setShowCheck] = useState(true)
-
-  useEffect(() => {
-    const timer = setTimeout(() => setShowCheck(false), 3000)
-    return () => clearTimeout(timer)
-  }, [])
-
   const drawShape = useCallback(
     (g: PixiGraphics) => {
       g.clear()
-      const c = showCheck ? color : STATUS_COLORS.idle
-      g.beginFill(c, 0.8)
+      g.beginFill(color, 0.8)
       g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
       g.endFill()
       g.lineStyle(2, 0xffffff, 0.4)
       g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
     },
-    [w, h, color, showCheck]
+    [w, h, color]
   )
 
   const badgeStyle = useMemo(
@@ -321,9 +313,7 @@ function DoneEffect({ w, h, color }: { w: number; h: number; color: number }): R
   return (
     <>
       <Graphics draw={drawShape} />
-      {showCheck && (
-        <Text text="✓" x={w - 6} y={2} anchor={{ x: 0.5, y: 0 }} style={badgeStyle} />
-      )}
+      <Text text="✓" x={w - 6} y={2} anchor={{ x: 0.5, y: 0 }} style={badgeStyle} />
     </>
   )
 }

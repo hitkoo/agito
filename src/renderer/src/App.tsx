@@ -58,7 +58,6 @@ import { useIPCSync } from './hooks/useIPC'
 import { useTerminalDockSync } from './hooks/useTerminalDockSync'
 import { useTheme, getPersistedTheme } from './hooks/useTheme'
 import { OfficeCanvas } from './world/OfficeCanvas'
-import { TerminalDock } from './panel/TerminalDock'
 import { CharacterContextMenu } from './components/CharacterContextMenu'
 import { CharactersPanel } from './components/CharactersPanel'
 import { Sidebar } from './components/Sidebar'
@@ -174,9 +173,6 @@ export default function App(): JSX.Element {
           <OfficeCanvas />
 
           {activeTab === 'runtime' && <CharacterContextMenu />}
-
-          {/* Terminal dock — overlay on canvas, visible in any tab */}
-          <TerminalDock />
 
           {activeTab === 'layout' && <LayoutContextMenu />}
         </div>

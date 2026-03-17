@@ -1,24 +1,14 @@
 export type TerminalDockRenderMode =
   | 'hidden'
-  | 'attached-dock'
-  | 'attached-dock-hidden-warm'
-  | 'attached-minimized-bar'
-  | 'detached-dock'
-  | 'detached-minimized-bar'
-
-export type TerminalDockOwnerWindow = 'attached' | 'detached'
+  | 'dock'
+  | 'minimized-bar'
 
 export interface TerminalDockRenderInput {
-  detachedMode: boolean
-  detached: boolean
   visible: boolean
   minimized: boolean
-  ownerWindow: TerminalDockOwnerWindow
-  detachedReady: boolean
 }
 
 export interface PtyResizeGuardInput {
-  isActiveOwner: boolean
   width: number
   height: number
   cols: number
@@ -44,28 +34,17 @@ export interface TerminalViewportMeasureInput {
   height: number
 }
 
-export function getTerminalDockRenderMode(input: TerminalDockRenderInput): TerminalDockRenderMode {
-  if (!input.visible) return 'hidden'
-
-  if (input.detachedMode) {
-    if (!input.detached) return 'hidden'
-    return input.minimized ? 'detached-minimized-bar' : 'detached-dock'
-  }
-
-  if (input.detached) {
-    if (input.ownerWindow === 'attached' || !input.detachedReady) {
-      return 'attached-dock'
-    }
-    return 'attached-dock-hidden-warm'
-  }
-  return input.minimized ? 'attached-minimized-bar' : 'attached-dock'
+export function resolveSessionResumeEngine(input: {
+  scannedEngineType: 'claude-code' | 'codex' | null
+  selectedEngine: 'claude-code' | 'codex' | null
+  characterEngine: 'claude-code' | 'codex' | null
+}): 'claude-code' | 'codex' | null {
+  return input.scannedEngineType ?? input.selectedEngine ?? input.characterEngine
 }
 
-export function isTerminalDockOwner(input: {
-  detachedMode: boolean
-  ownerWindow: TerminalDockOwnerWindow
-}): boolean {
-  return input.detachedMode ? input.ownerWindow === 'detached' : input.ownerWindow === 'attached'
+export function getTerminalDockRenderMode(input: TerminalDockRenderInput): TerminalDockRenderMode {
+  if (!input.visible) return 'hidden'
+  return input.minimized ? 'minimized-bar' : 'dock'
 }
 
 export function buildInitialTerminalReplay(
@@ -110,7 +89,6 @@ export function shouldScheduleTrailingTerminalResize(engine: 'claude-code' | 'co
 }
 
 export function shouldSendPtyResize(input: PtyResizeGuardInput): boolean {
-  if (!input.isActiveOwner) return false
   if (input.width <= 0 || input.height <= 0) return false
   if (input.cols <= 0 || input.rows <= 0) return false
   return true

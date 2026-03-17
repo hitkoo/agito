@@ -2,6 +2,8 @@ import { type ReactElement, useEffect, useCallback } from 'react'
 import { useUIStore } from '../stores/ui-store'
 import { useCharacterStore } from '../stores/character-store'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
+import type { AgitoPersistentData } from '../../../shared/types'
+import { buildSessionResumeInvokeArgs } from '../../../shared/session-resume'
 
 export function CharacterContextMenu(): ReactElement | null {
   const contextMenu = useUIStore((s) => s.contextMenu)
@@ -60,11 +62,16 @@ export function CharacterContextMenu(): ReactElement | null {
     closeContextMenu()
     const char = useCharacterStore.getState().characters.find((c) => c.id === characterId)
     if (!char?.currentSessionId) return
+    const { sessions } = await window.api.invoke<AgitoPersistentData>(IPC_COMMANDS.STORE_READ)
     // Re-resume same session — replaceSession() internally kills old PTY
-    await window.api.invoke(IPC_COMMANDS.SESSION_RESUME, {
-      characterId,
-      sessionId: char.currentSessionId,
-    })
+    await window.api.invoke(
+      IPC_COMMANDS.SESSION_RESUME,
+      buildSessionResumeInvokeArgs({
+        characterId,
+        sessionId: char.currentSessionId,
+        sessions,
+      })
+    )
     await loadCharacters()
     bumpTerminalRefreshKey(characterId)
   }, [contextMenu, closeContextMenu, loadCharacters, bumpTerminalRefreshKey])

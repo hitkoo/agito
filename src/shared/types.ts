@@ -1,6 +1,7 @@
 import type {
   CharacterRuntimeState,
 } from './character-runtime-state'
+import type { DockLayout } from './terminal-dock-layout'
 
 // --- Engine ---
 
@@ -128,11 +129,11 @@ export interface AgitoSettings {
 // --- Terminal Dock ---
 
 export interface TerminalDockSyncState {
-  detached: boolean
+  visible: boolean
   minimized: boolean
+  focusedPaneId: string
   activeCharacterId: string | null
-  ownerWindow: 'attached' | 'detached'
-  detachedReady: boolean
+  layout: DockLayout
 }
 
 // --- Asset Management ---
