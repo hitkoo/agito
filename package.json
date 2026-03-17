@@ -13,6 +13,8 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "keytar": "^7.9.0",
     "node-pty": "^1.0.0",
     "sonner": "^2.0.7",
     "sql.js": "^1.14.1"

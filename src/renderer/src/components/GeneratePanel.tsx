@@ -1,8 +1,10 @@
 import { useState, useCallback } from 'react'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
+import { canAccessGenerate } from '../../../shared/auth'
 import { Button } from './ui/button'
 import { Label } from './ui/label'
 import type { AssetCategory } from '../../../shared/types'
+import { useAuthStore } from '../stores/auth-store'
 
 interface GenerateResultItem {
   image_base64: string
@@ -11,6 +13,8 @@ interface GenerateResultItem {
 }
 
 export function GeneratePanel(): JSX.Element {
+  const authSession = useAuthStore((s) => s.session)
+  const openAuthDialog = useAuthStore((s) => s.openDialog)
   const [category, setCategory] = useState<AssetCategory>('skin')
   const [prompt, setPrompt] = useState('')
   const [view, setView] = useState<'3/4' | 'iso'>('3/4')
@@ -76,6 +80,28 @@ export function GeneratePanel(): JSX.Element {
     },
     []
   )
+
+  if (!canAccessGenerate(authSession.status)) {
+    return (
+      <div className="absolute inset-0 z-10 flex items-center justify-center bg-background">
+        <div className="w-full max-w-md rounded-xl border border-border bg-muted/20 p-8 text-center shadow-lg">
+          <h2 className="text-xl font-semibold">Sign in to use Generate</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Local workspace features stay available, but image generation requires an account.
+          </p>
+
+          <div className="mt-6 flex justify-center gap-3">
+            <>
+              <Button onClick={() => openAuthDialog('sign_in')}>Sign in</Button>
+              <Button variant="outline" onClick={() => openAuthDialog('sign_up')}>
+                Create account
+              </Button>
+            </>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="absolute inset-0 z-10 flex bg-background">

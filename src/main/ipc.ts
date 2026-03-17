@@ -5,6 +5,8 @@ import { join, basename, extname } from 'path'
 import { homedir } from 'os'
 import { IPC_COMMANDS, IPC_EVENTS } from '../shared/ipc-channels'
 import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, AssetGenerateRequest, AssetGenerateResult, ScannedSession } from '../shared/types'
+import { canAccessGenerate, type AuthSessionState } from '../shared/auth'
+import { hasSupabasePublicConfig, publicConfig } from '../shared/public-config'
 import type { AgitoStore } from './store'
 import { TerminalSessionService } from './terminal-session-service'
 import { GRID_COLS, GRID_ROWS, FOOTPRINTS, MAX_SESSION_HISTORY, ASSETS_DIR } from '../shared/constants'
@@ -12,6 +14,10 @@ import type { EngineAdapter } from './engine/types'
 import { claudeCodeAdapter } from './engine/claude-code'
 import { codexAdapter } from './engine/codex'
 import { CharacterRuntimeService } from './character-runtime-service'
+import { MainAuthService, type AuthProviderAdapter, type AuthProviderResult } from './auth/auth-service'
+import { createCredentialStore, type StoredAuthSession } from './auth/credential-store'
+import { SupabaseAuthProvider } from './auth/supabase-auth-provider'
+import type { DeepLinkOAuthCallbackCoordinator } from './auth/oauth-callback'
 
 // 16ms PTY output batching (~60fps) to prevent xterm.js write() flooding
 const PTY_BATCH_MS = 16
@@ -62,9 +68,84 @@ function flushPtyData(characterId: string, broadcast: (event: string, payload: u
   pendingPtyData.delete(characterId)
 }
 
-export function registerIPCHandlers(store: AgitoStore): void {
+export function registerIPCHandlers(
+  store: AgitoStore,
+  options?: {
+    authProtocolScheme?: string
+    authDeepLinkCoordinator?: DeepLinkOAuthCallbackCoordinator
+  }
+): void {
   const terminalSessions = new TerminalSessionService()
   const runtimeService = new CharacterRuntimeService()
+  const credentialStore = createCredentialStore(store.getBasePath())
+  const syncAuthProfile = async (session: StoredAuthSession): Promise<StoredAuthSession['profile']> => {
+    const res = await fetch(`${publicConfig.apiUrl}/api/me`, {
+      headers: {
+        Authorization: `Bearer ${session.accessToken}`,
+      },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) {
+      throw new Error(`Failed to sync auth profile: ${res.status}`)
+    }
+    const profile = await res.json() as {
+      id: string
+      email: string
+      display_name: string | null
+      avatar_url: string | null
+      provider: 'email' | 'google'
+      email_verified: boolean
+    }
+    return {
+      id: profile.id,
+      email: profile.email,
+      displayName: profile.display_name,
+      avatarUrl: profile.avatar_url,
+      provider: profile.provider,
+      emailVerified: profile.email_verified,
+    }
+  }
+  const authProvider: AuthProviderAdapter<StoredAuthSession> = (
+    hasSupabasePublicConfig(publicConfig)
+  )
+    ? new SupabaseAuthProvider({
+        supabaseUrl: publicConfig.supabaseUrl,
+        supabasePublishableKey: publicConfig.supabasePublishableKey,
+        isPackaged: app.isPackaged,
+        protocolScheme: options?.authProtocolScheme ?? 'agito',
+        waitForDeepLinkCallback: options?.authDeepLinkCoordinator
+          ? () => options.authDeepLinkCoordinator!.waitForCallback()
+          : undefined,
+        resetPasswordRedirectUrl: publicConfig.authResetRedirectUrl ?? undefined,
+      })
+    : {
+        restoreSession: async () => null,
+        signInWithEmail: async () => {
+          throw new Error('Auth is not configured. Set AGITO_PUBLIC_SUPABASE_URL and AGITO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.')
+        },
+        signUpWithEmail: async () => {
+          throw new Error('Auth is not configured. Set AGITO_PUBLIC_SUPABASE_URL and AGITO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.')
+        },
+        signInWithGoogle: async () => {
+          throw new Error('Auth is not configured. Set AGITO_PUBLIC_SUPABASE_URL and AGITO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.')
+        },
+        signOut: async () => {},
+        resendSignUpVerification: async () => {
+          throw new Error('Auth is not configured. Set AGITO_PUBLIC_SUPABASE_URL and AGITO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.')
+        },
+        sendPasswordReset: async () => {
+          throw new Error('Auth is not configured. Set AGITO_PUBLIC_SUPABASE_URL and AGITO_PUBLIC_SUPABASE_PUBLISHABLE_KEY.')
+        },
+      }
+  const authService = new MainAuthService({
+    credentialStore,
+    provider: authProvider,
+    syncProfile: syncAuthProfile,
+  })
+  const authReady = authService.initialize().catch((error) => {
+    console.error('[AUTH] Failed to initialize session', error)
+    return authService.getState()
+  })
   app.once('before-quit', () => {
     terminalSessions.killAll()
   })
@@ -72,6 +153,9 @@ export function registerIPCHandlers(store: AgitoStore): void {
   runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
   runtimeService.onUpdate((state) => {
     broadcastToAll(IPC_EVENTS.CHARACTER_RUNTIME, state)
+  })
+  authService.onUpdate((state) => {
+    broadcastToAll(IPC_EVENTS.AUTH_SESSION_CHANGED, state)
   })
 
   const buildStoreSnapshot = () => {
@@ -189,6 +273,64 @@ export function registerIPCHandlers(store: AgitoStore): void {
     return terminalSessions.getSnapshot(characterId)
   })
 
+  ipcMain.handle(IPC_COMMANDS.CHARACTER_RUNTIME_SNAPSHOT, () => {
+    return runtimeService.getAllStates()
+  })
+
+  // --- Auth ---
+
+  ipcMain.handle(IPC_COMMANDS.AUTH_GET_SESSION, async () => {
+    await authReady
+    return authService.getState()
+  })
+
+  ipcMain.handle(
+    IPC_COMMANDS.AUTH_SIGN_IN_EMAIL,
+    async (_, args: { email: string; password: string }) => {
+      await authReady
+      return authService.signInWithEmail(args.email, args.password)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_COMMANDS.AUTH_SIGN_UP_EMAIL,
+    async (_, args: { email: string; password: string }) => {
+      await authReady
+      return authService.signUpWithEmail(args.email, args.password)
+    }
+  )
+
+  ipcMain.handle(IPC_COMMANDS.AUTH_SIGN_IN_GOOGLE, async () => {
+    await authReady
+    return authService.signInWithGoogle()
+  })
+
+  ipcMain.handle(IPC_COMMANDS.AUTH_SIGN_OUT, async () => {
+    await authReady
+    return authService.signOut()
+  })
+
+  ipcMain.handle(
+    IPC_COMMANDS.AUTH_RESEND_SIGNUP_VERIFICATION,
+    async (_, args: { email: string }) => {
+      await authReady
+      await authService.resendSignUpVerification(args.email)
+      return { success: true }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_COMMANDS.AUTH_SEND_PASSWORD_RESET,
+    async (_, args: { email: string }) => {
+      await authReady
+      await authService.sendPasswordReset(args.email)
+      return { success: true }
+    }
+  )
+
+  ipcMain.handle(IPC_COMMANDS.AUTH_REFRESH_SESSION, async () => {
+    return authService.initialize()
+  })
   ipcMain.handle(
     IPC_COMMANDS.CHARACTER_RUNTIME_SET_ATTENTION,
     (_, args: { characterId: string; attentionActive: boolean }) => {
@@ -677,18 +819,32 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
   // --- Asset Generation (via agito-server) ---
 
-  const getApiBaseUrl = (): string => process.env.AGITO_API_URL || 'http://localhost:8000'
-
-
-
-
   ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE, async (_, req: AssetGenerateRequest) => {
-    const baseUrl = getApiBaseUrl()
+    const baseUrl = publicConfig.apiUrl
+    await authReady
+    const authState: AuthSessionState = authService.getState()
+    if (!canAccessGenerate(authState.status)) {
+      return {
+        success: false,
+        error: 'Sign in to use Generate.',
+      }
+    }
+
+    const authSession = await credentialStore.getSession()
+    if (!authSession?.accessToken) {
+      return {
+        success: false,
+        error: 'Missing auth session. Sign in again to use Generate.',
+      }
+    }
 
     try {
       const res = await fetch(`${baseUrl}/api/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authSession.accessToken}`,
+        },
         body: JSON.stringify(req),
         signal: AbortSignal.timeout(300_000),
       })
