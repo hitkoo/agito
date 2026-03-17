@@ -5,9 +5,17 @@ import { registerIPCHandlers } from './ipc'
 import { AgitoStore } from './store'
 import { IPC_COMMANDS, IPC_DOCK_EVENTS } from '../shared/ipc-channels'
 import type { TerminalDockSyncState } from '../shared/types'
+import { DeepLinkOAuthCallbackCoordinator } from './auth/oauth-callback'
 
 let mainWindow: BrowserWindow | null = null
 let detachedTerminalWindow: BrowserWindow | null = null
+const AUTH_PROTOCOL_SCHEME = 'agito'
+const authDeepLinkCoordinator = new DeepLinkOAuthCallbackCoordinator(AUTH_PROTOCOL_SCHEME)
+
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  authDeepLinkCoordinator.handleOpenUrl(url)
+})
 
 function loadRenderer(window: BrowserWindow, mode?: 'terminal-dock'): void {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -53,6 +61,9 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.agito.app')
+  if (app.isPackaged) {
+    app.setAsDefaultProtocolClient(AUTH_PROTOCOL_SCHEME)
+  }
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -61,7 +72,10 @@ app.whenReady().then(() => {
   const store = new AgitoStore()
   store.initialize()
 
-  registerIPCHandlers(store)
+  registerIPCHandlers(store, {
+    authProtocolScheme: AUTH_PROTOCOL_SCHEME,
+    authDeepLinkCoordinator,
+  })
 
   createWindow()
 

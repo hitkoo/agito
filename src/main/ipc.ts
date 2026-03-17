@@ -16,6 +16,7 @@ import { CharacterRuntimeService } from './character-runtime-service'
 import { MainAuthService, type AuthProviderAdapter, type AuthProviderResult } from './auth/auth-service'
 import { createCredentialStore, type StoredAuthSession } from './auth/credential-store'
 import { SupabaseAuthProvider } from './auth/supabase-auth-provider'
+import type { DeepLinkOAuthCallbackCoordinator } from './auth/oauth-callback'
 
 // 16ms PTY output batching (~60fps) to prevent xterm.js write() flooding
 const PTY_BATCH_MS = 16
@@ -66,7 +67,13 @@ function flushPtyData(characterId: string, broadcast: (event: string, payload: u
   pendingPtyData.delete(characterId)
 }
 
-export function registerIPCHandlers(store: AgitoStore): void {
+export function registerIPCHandlers(
+  store: AgitoStore,
+  options?: {
+    authProtocolScheme?: string
+    authDeepLinkCoordinator?: DeepLinkOAuthCallbackCoordinator
+  }
+): void {
   const terminalSessions = new TerminalSessionService()
   const runtimeService = new CharacterRuntimeService()
   const credentialStore = createCredentialStore(store.getBasePath())
@@ -76,6 +83,11 @@ export function registerIPCHandlers(store: AgitoStore): void {
     ? new SupabaseAuthProvider({
         supabaseUrl: process.env.AGITO_SUPABASE_URL,
         supabaseAnonKey: process.env.AGITO_SUPABASE_ANON_KEY,
+        isPackaged: app.isPackaged,
+        protocolScheme: options?.authProtocolScheme ?? 'agito',
+        waitForDeepLinkCallback: options?.authDeepLinkCoordinator
+          ? () => options.authDeepLinkCoordinator!.waitForCallback()
+          : undefined,
         resetPasswordRedirectUrl: process.env.AGITO_AUTH_RESET_REDIRECT_URL,
       })
     : {

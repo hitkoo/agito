@@ -9,10 +9,17 @@ import type { AuthProvider, AuthUserProfile } from '../../shared/auth'
 import type { AuthProviderAdapter, AuthProviderResult } from './auth-service'
 import { createCallbackServer } from './callback-server'
 import type { StoredAuthSession } from './credential-store'
+import {
+  buildGoogleOAuthRedirectTarget,
+  type OAuthCallbackPayload,
+} from './oauth-callback'
 
 interface SupabaseAuthProviderOptions {
   supabaseUrl: string
   supabaseAnonKey: string
+  isPackaged: boolean
+  protocolScheme: string
+  waitForDeepLinkCallback?: () => Promise<OAuthCallbackPayload>
   resetPasswordRedirectUrl?: string
 }
 
@@ -90,6 +97,9 @@ function toResult(session: Session | null, user: User | null): AuthProviderResul
 
 export class SupabaseAuthProvider implements AuthProviderAdapter<StoredAuthSession> {
   private readonly client
+  private readonly isPackaged: boolean
+  private readonly protocolScheme: string
+  private readonly waitForDeepLinkCallback?: () => Promise<OAuthCallbackPayload>
   private readonly resetPasswordRedirectUrl?: string
 
   constructor(options: SupabaseAuthProviderOptions) {
@@ -102,6 +112,9 @@ export class SupabaseAuthProvider implements AuthProviderAdapter<StoredAuthSessi
         storage: createEphemeralStorage(),
       },
     })
+    this.isPackaged = options.isPackaged
+    this.protocolScheme = options.protocolScheme
+    this.waitForDeepLinkCallback = options.waitForDeepLinkCallback
     this.resetPasswordRedirectUrl = options.resetPasswordRedirectUrl
   }
 
@@ -133,13 +146,18 @@ export class SupabaseAuthProvider implements AuthProviderAdapter<StoredAuthSessi
   }
 
   async signInWithGoogle(): Promise<AuthProviderResult<StoredAuthSession>> {
-    const callbackServer = await createCallbackServer()
+    const callbackServer = this.isPackaged ? null : await createCallbackServer()
 
     try {
+      const redirectTo = buildGoogleOAuthRedirectTarget({
+        isPackaged: this.isPackaged,
+        localhostCallbackBaseUrl: callbackServer?.url ?? 'http://127.0.0.1:0',
+        protocolScheme: this.protocolScheme,
+      })
       const { data, error } = await this.client.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${callbackServer.url}/callback`,
+          redirectTo,
           skipBrowserRedirect: true,
           queryParams: {
             access_type: 'offline',
@@ -152,7 +170,9 @@ export class SupabaseAuthProvider implements AuthProviderAdapter<StoredAuthSessi
       if (!data.url) throw new Error('Google OAuth URL was not returned by Supabase')
 
       await shell.openExternal(data.url)
-      const payload = await callbackServer.promise
+      const payload = this.isPackaged
+        ? await this.waitForPackagedCallback()
+        : await callbackServer!.promise
 
       if (payload.query.error) {
         throw new Error(payload.query.error_description ?? payload.query.error)
@@ -168,7 +188,7 @@ export class SupabaseAuthProvider implements AuthProviderAdapter<StoredAuthSessi
 
       return toResult(exchangeData.session, exchangeData.user)
     } finally {
-      callbackServer.close()
+      callbackServer?.close()
     }
   }
 
@@ -182,5 +202,12 @@ export class SupabaseAuthProvider implements AuthProviderAdapter<StoredAuthSessi
       ? { redirectTo: this.resetPasswordRedirectUrl }
       : undefined)
     if (error) throw error
+  }
+
+  private async waitForPackagedCallback(): Promise<OAuthCallbackPayload> {
+    if (!this.waitForDeepLinkCallback) {
+      throw new Error('Packaged Google OAuth callback handler is not configured')
+    }
+    return this.waitForDeepLinkCallback()
   }
 }
