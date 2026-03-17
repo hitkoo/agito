@@ -123,6 +123,22 @@ function hasClaudePlanArtifact(record: ClaudeRecord): boolean {
   return typeof value.filePath === 'string' && value.filePath.includes('/.claude/plans/')
 }
 
+function isClaudeRunningProgressType(dataType: string | undefined): boolean {
+  return (
+    dataType === 'agent_progress' ||
+    dataType === 'bash_progress' ||
+    dataType === 'mcp_progress'
+  )
+}
+
+function isClaudeIgnoredProgressType(dataType: string | undefined): boolean {
+  return (
+    dataType === 'hook_progress' ||
+    dataType === 'query_update' ||
+    dataType === 'search_results_received'
+  )
+}
+
 function isCodexPlanModeRecord(record: CodexRecord): boolean {
   if (record.type === 'event_msg' && record.payload?.collaboration_mode_kind) {
     return record.payload.collaboration_mode_kind === 'plan'
@@ -229,7 +245,7 @@ export function createClaudeSemanticParser(): SemanticParser {
   } = createBaseParser('claude-code')
   const activeTools = new Map<string, string>()
   let planModeActive = false
-  let sawPlanArtifact = false
+  let pendingPlanHandoffCandidate: { sourceToolUseId?: string } | null = null
 
   return {
     ingestLine(line: string): void {
@@ -245,19 +261,26 @@ export function createClaudeSemanticParser(): SemanticParser {
       }
 
       if (record.error) {
+        pendingPlanHandoffCandidate = null
         setError(record.error)
         return
       }
 
       if (record.type === 'progress') {
-        if (!state.needsInput) {
+        const progressType = record.data?.type
+        if (!state.needsInput && isClaudeRunningProgressType(progressType)) {
           const progressToolUseId = record.toolUseID ?? record.parentToolUseID
           const progressToolName =
             (progressToolUseId ? activeTools.get(progressToolUseId) : null) ??
             state.activeToolName ??
-            'tool'
+            undefined
           startRunning(progressToolName)
+          return
         }
+        if (isClaudeIgnoredProgressType(progressType)) {
+          return
+        }
+        console.warn('[agito] Unknown Claude progress type', progressType ?? '<missing>')
         return
       }
 
@@ -268,6 +291,21 @@ export function createClaudeSemanticParser(): SemanticParser {
           .map((block) => block.text ?? '')
           .join('\n')
           .trim()
+        const hasToolUseBlock = blocks.some((block) => block.type === 'tool_use')
+
+        if (pendingPlanHandoffCandidate) {
+          if (record.message?.stop_reason === 'end_turn' && !hasToolUseBlock) {
+            pendingPlanHandoffCandidate = null
+            setNeedInput(
+              'plan_handoff',
+              buildNeedInputEvidence('claude-code', 'contextual', 'plan_artifact')
+            )
+            state.lastAssistantPreview = text || state.lastAssistantPreview
+            return
+          }
+          pendingPlanHandoffCandidate = null
+        }
+
         const hasThinkingBlock = blocks.some((block) => block.type === 'thinking')
         if (text) {
           setPreview(text)
@@ -293,7 +331,7 @@ export function createClaudeSemanticParser(): SemanticParser {
               'plan_handoff',
               buildNeedInputEvidence('claude-code', 'explicit', 'exit_plan_mode', block.id)
             )
-            sawPlanArtifact = false
+            pendingPlanHandoffCandidate = null
             continue
           }
           setPreview(null)
@@ -301,15 +339,6 @@ export function createClaudeSemanticParser(): SemanticParser {
         }
 
         if (record.message?.stop_reason === 'end_turn') {
-          if (planModeActive && sawPlanArtifact) {
-            sawPlanArtifact = false
-            setNeedInput(
-              'plan_handoff',
-              buildNeedInputEvidence('claude-code', 'contextual', 'plan_artifact')
-            )
-            state.lastAssistantPreview = text || state.lastAssistantPreview
-            return
-          }
           completeTurn()
         }
         return
@@ -323,7 +352,7 @@ export function createClaudeSemanticParser(): SemanticParser {
       if (blocks.length === 0 && typeof content === 'string' && content.trim()) {
         clearNeedInput()
         finishTool()
-        sawPlanArtifact = false
+        pendingPlanHandoffCandidate = null
         return
       }
 
@@ -344,9 +373,9 @@ export function createClaudeSemanticParser(): SemanticParser {
           clearNeedInput()
         }
 
-        if (hasClaudePlanArtifact(record)) {
+        if (planModeActive && hasClaudePlanArtifact(record) && toolName !== 'ExitPlanMode') {
           clearNeedInput()
-          sawPlanArtifact = true
+          pendingPlanHandoffCandidate = { sourceToolUseId: toolUseId ?? undefined }
         }
 
         if (block.is_error && isClaudeApprovalPendingText(text)) {

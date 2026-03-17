@@ -205,13 +205,41 @@ describe('createClaudeSemanticParser', () => {
     })
   })
 
-  test('marks Claude progress records as running even before assistant text is emitted', () => {
+  test('marks Claude agent progress records as running even before assistant text is emitted', () => {
     const parser = createClaudeSemanticParser()
 
     parser.ingestLine(
       JSON.stringify({
         type: 'progress',
         toolUseID: 'toolu_progress',
+        data: {
+          type: 'agent_progress',
+          message: {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [],
+            },
+          },
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      activeToolName: null,
+      unreadDone: false,
+      needsInput: false,
+    })
+  })
+
+  test('ignores Claude hook progress for semantic running state', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'progress',
+        toolUseID: 'toolu_hook',
         data: {
           type: 'hook_progress',
           hookEvent: 'PreToolUse',
@@ -220,11 +248,181 @@ describe('createClaudeSemanticParser', () => {
     )
 
     expect(parser.getState()).toMatchObject({
-      isRunning: true,
-      activeToolName: 'tool',
+      isRunning: false,
+      activeToolName: null,
       unreadDone: false,
       needsInput: false,
     })
+  })
+
+  test('does not reopen running from Claude stop hook progress after completion', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_build',
+              name: 'Bash',
+              input: { command: 'pnpm build' },
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_build',
+              content: 'ok',
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'Finished the build.' }],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'progress',
+        toolUseID: 'toolu_stop',
+        parentToolUseID: 'toolu_stop',
+        data: {
+          type: 'hook_progress',
+          hookEvent: 'Stop',
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'system',
+        subtype: 'turn_duration',
+        durationMs: 1000,
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      activeToolName: null,
+      unreadDone: true,
+      needsInput: false,
+      lastAssistantPreview: 'Finished the build.',
+    })
+  })
+
+  test('reopens running from Claude agent progress after a completed turn', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'Main turn finished.' }],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'progress',
+        toolUseID: 'toolu_agent',
+        parentToolUseID: 'toolu_agent',
+        data: {
+          type: 'agent_progress',
+          message: {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [],
+            },
+          },
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      activeToolName: null,
+      unreadDone: false,
+      needsInput: false,
+    })
+  })
+
+  test('ignores Claude query progress records for semantic status', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'progress',
+        data: {
+          type: 'query_update',
+          query: 'status system',
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      activeToolName: null,
+      unreadDone: false,
+      needsInput: false,
+    })
+  })
+
+  test('warns on unknown Claude progress types without changing semantic state', () => {
+    const parser = createClaudeSemanticParser()
+    const originalWarn = console.warn
+    const warnings: unknown[][] = []
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args)
+    }
+
+    try {
+      parser.ingestLine(
+        JSON.stringify({
+          type: 'progress',
+          data: {
+            type: 'future_progress_type',
+          },
+        })
+      )
+    } finally {
+      console.warn = originalWarn
+    }
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      activeToolName: null,
+      unreadDone: false,
+      needsInput: false,
+    })
+    expect(warnings).toHaveLength(1)
+    expect(String(warnings[0]?.[0] ?? '')).toContain('Unknown Claude progress type')
+    expect(String(warnings[0]?.[1] ?? '')).toContain('future_progress_type')
   })
 
   test('treats errors as transient and clears them on later semantic activity', () => {
@@ -415,6 +613,194 @@ describe('createClaudeSemanticParser', () => {
         engine: 'claude-code',
         anchorType: 'plan_artifact',
       },
+    })
+  })
+
+  test('does not keep a Claude plan artifact pending after implementation starts', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        permissionMode: 'plan',
+        message: {
+          role: 'user',
+          content: 'Plan this refactor.',
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_exit_plan',
+              name: 'ExitPlanMode',
+              input: { plan: '# Example plan' },
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_exit_plan',
+              content: 'Plan saved.',
+            },
+          ],
+        },
+        toolUseResult: {
+          plan: '# Example plan',
+          filePath: '/Users/seungjin/.claude/plans/example.md',
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [{ type: 'text', text: 'Implementing the refactor now.' }],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_bash',
+              name: 'Bash',
+              input: { command: 'git status --short' },
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_bash',
+              content: 'M src/main/engine-status-parser.ts',
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'Implemented the refactor.' }],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      needsInput: false,
+      needsInputReason: null,
+      needsInputEvidence: null,
+      unreadDone: true,
+    })
+  })
+
+  test('consumes a Claude plan artifact on the immediate next assistant turn only', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        permissionMode: 'plan',
+        message: {
+          role: 'user',
+          content: 'Plan this refactor.',
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_plan',
+              content: 'Plan saved.',
+            },
+          ],
+        },
+        toolUseResult: {
+          plan: '# Example plan',
+          filePath: '/Users/seungjin/.claude/plans/example.md',
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_read',
+              name: 'Read',
+              input: { file_path: '/tmp/example.ts' },
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'Implemented the plan.' }],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      needsInput: false,
+      needsInputReason: null,
+      needsInputEvidence: null,
+      unreadDone: true,
     })
   })
 

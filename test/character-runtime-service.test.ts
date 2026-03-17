@@ -176,6 +176,82 @@ describe('CharacterRuntimeService', () => {
     service.stopSession('char-done')
   })
 
+  test('ignores Claude stop hook progress during initial transcript replay on startup', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-claude-stop-hook'
+    writeFileSync(
+      join(transcriptDir, `${sessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: 'Finished the task.' }],
+          },
+        }),
+        JSON.stringify({
+          type: 'progress',
+          toolUseID: 'toolu_stop',
+          parentToolUseID: 'toolu_stop',
+          data: {
+            type: 'hook_progress',
+            hookEvent: 'Stop',
+          },
+        }),
+        JSON.stringify({
+          type: 'system',
+          subtype: 'turn_duration',
+          durationMs: 1000,
+        }),
+      ].join('\n') + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-stop-hook',
+        name: 'stop-hook',
+        soul: '',
+        skin: '',
+        engine: 'claude-code',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2026-03-17T00:00:00.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-stop-hook',
+        sessionId,
+        engineType: 'claude-code',
+        workingDirectory: '/tmp/project',
+        createdAt: '2026-03-17T00:00:00.000Z',
+        lastActiveAt: '2026-03-17T00:00:01.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({ homeDirectory: fakeHome })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-stop-hook')).toMatchObject({
+      markerStatus: 'idle',
+      isRunning: false,
+      activeToolName: null,
+      unreadDone: false,
+      lastAssistantPreview: 'Finished the task.',
+    })
+
+    service.stopSession('char-stop-hook')
+  })
+
   test('clears transient transcript errors when attention is acquired', () => {
     const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
     const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
