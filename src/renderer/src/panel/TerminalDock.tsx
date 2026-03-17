@@ -49,9 +49,9 @@ const RESIZE_CURSORS: Record<ResizeDir, string> = {
 const STATUS_DOT_COLORS: Record<string, string> = {
   no_session: "#6c757d",
   idle: "#7c8591",
-  running: "#4ecdc4",
-  need_input: "#ffd93d",
-  done: "#51cf66",
+  running: "#7c8591",
+  need_input: "#51cf66",
+  done: "#4dabf7",
   error: "#ff6b6b",
 };
 
@@ -883,7 +883,10 @@ function TabButton({
       .then(setSkinPreview);
   }, [character.skin]);
 
-  const status = getCharacterMarkerStatus(runtimeState, character.currentSessionId);
+  const status = getCharacterMarkerStatus(
+    runtimeState,
+    character.currentSessionId,
+  );
   const dotColor = STATUS_DOT_COLORS[status] || STATUS_DOT_COLORS.idle;
 
   return (
@@ -917,11 +920,34 @@ function TabButton({
             {character.name[0]}
           </span>
         )}
-        {/* Status dot overlay at top-left */}
-        <span
-          className="absolute top-0.5 left-0.5 w-2 h-2 rounded-full border border-background"
-          style={{ backgroundColor: dotColor }}
-        />
+        {/* Status marker overlay at top-left */}
+        {status === "running" ? (
+          <span
+            className="absolute top-0.5 left-0.5 w-2 h-2 rounded-full border-[1.5px] animate-spin"
+            style={{
+              borderColor: "rgba(124,133,145,0.3)",
+              borderTopColor: dotColor,
+              animationDuration: "2s",
+            }}
+          />
+        ) : (
+          <>
+            <span
+              className={`absolute top-0.5 left-0.5 w-2 h-2 rounded-full border border-background ${
+                status === "need_input"
+                  ? "animate-[status-pulse_1.5s_ease-out_infinite]"
+                  : ""
+              }`}
+              style={{ backgroundColor: dotColor }}
+            />
+            {status === "need_input" && (
+              <span
+                className="absolute top-0.5 left-0.5 w-2 h-2 rounded-full animate-[status-ring_1.5s_ease-out_infinite]"
+                style={{ backgroundColor: dotColor }}
+              />
+            )}
+          </>
+        )}
       </button>
       {/* Menu button */}
       <button
@@ -959,7 +985,10 @@ function MinimizedFloatBarItem({
       .then(setSkinPreview);
   }, [character.skin]);
 
-  const status = getCharacterMarkerStatus(runtimeState, character.currentSessionId);
+  const status = getCharacterMarkerStatus(
+    runtimeState,
+    character.currentSessionId,
+  );
   const dotColor = STATUS_DOT_COLORS[status] || STATUS_DOT_COLORS.idle;
 
   return (
@@ -980,10 +1009,33 @@ function MinimizedFloatBarItem({
           {character.name[0]}
         </span>
       )}
-      <span
-        className="absolute top-0 left-0 w-1.5 h-1.5 rounded-full border border-background"
-        style={{ backgroundColor: dotColor }}
-      />
+      {status === "running" ? (
+        <span
+          className="absolute top-0 left-0 w-2 h-2 rounded-full border-[1.5px] animate-spin"
+          style={{
+            borderColor: "rgba(124,133,145,0.3)",
+            borderTopColor: dotColor,
+            animationDuration: "2s",
+          }}
+        />
+      ) : (
+        <>
+          <span
+            className={`absolute top-0 left-0 w-2 h-2 rounded-full border border-background ${
+              status === "need_input"
+                ? "animate-[status-pulse_1.5s_ease-out_infinite]"
+                : ""
+            }`}
+            style={{ backgroundColor: dotColor }}
+          />
+          {status === "need_input" && (
+            <span
+              className="absolute top-0 left-0 w-2 h-2 rounded-full animate-[status-ring_1.5s_ease-out_infinite]"
+              style={{ backgroundColor: dotColor }}
+            />
+          )}
+        </>
+      )}
     </button>
   );
 }

@@ -61,9 +61,9 @@ function getEffectiveMode(theme: ThemeMode): 'dark' | 'light' {
 const STATUS_COLORS: Record<CharacterMarkerStatus, number> = {
   no_session: 0x6c757d,
   idle: 0x7c8591,
-  running: 0x4ecdc4,
-  need_input: 0xffd93d,
-  done: 0x51cf66,
+  running: 0x7c8591,
+  need_input: 0x51cf66,
+  done: 0x4dabf7,
   error: 0xff6b6b,
 }
 
@@ -226,63 +226,19 @@ function IdleEffect({
 
 // Working: pulsing glow + blinking activity dot
 function WorkingEffect({ w, h, color }: { w: number; h: number; color: number }): ReactElement {
-  const elapsed = useRef(0)
-  const glowRef = useRef<PixiGraphics | null>(null)
-  const dotRef = useRef<PixiGraphics | null>(null)
-
-  useTick((delta) => {
-    elapsed.current += delta
-    const t = elapsed.current / 60
-
-    if (glowRef.current) {
-      const alpha = 0.2 + 0.4 * ((Math.sin(t * Math.PI * 2) + 1) / 2)
-      glowRef.current.alpha = alpha
-    }
-    if (dotRef.current) {
-      const blinkAlpha = Math.sin(t * Math.PI * 3) > 0 ? 1 : 0.1
-      dotRef.current.alpha = blinkAlpha
-    }
-  })
-
-  const drawGlow = useCallback(
+  const draw = useCallback(
     (g: PixiGraphics) => {
       g.clear()
-      g.beginFill(color, 1)
-      g.drawRoundedRect(-4, -4, w + 8, h + 8, 12)
-      g.endFill()
-    },
-    [w, h, color]
-  )
-
-  const drawShape = useCallback(
-    (g: PixiGraphics) => {
-      g.clear()
-      g.beginFill(color, 0.9)
+      g.beginFill(color, 0.85)
       g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
       g.endFill()
-      g.lineStyle(2, 0xffffff, 0.6)
+      g.lineStyle(2, 0xffffff, 0.4)
       g.drawRoundedRect(4, 4, w - 8, h - 8, 8)
     },
     [w, h, color]
   )
 
-  const drawDot = useCallback(
-    (g: PixiGraphics) => {
-      g.clear()
-      g.beginFill(0xffffff, 1)
-      g.drawCircle(0, 0, 3)
-      g.endFill()
-    },
-    []
-  )
-
-  return (
-    <>
-      <Graphics ref={glowRef} draw={drawGlow} />
-      <Graphics draw={drawShape} />
-      <Graphics ref={dotRef} draw={drawDot} x={w - 10} y={10} />
-    </>
-  )
+  return <Graphics draw={draw} />
 }
 
 // Error: static red glow + "!" badge
@@ -439,7 +395,7 @@ function WaitingEffect({ w, h, color }: { w: number; h: number; color: number })
 
 const STATUS_BADGE_EMOJI: Record<string, string> = {
   running: '\u{26A1}',
-  need_input: '\u{1F4AD}',
+  need_input: '\u{1F4AC}',
   done: '\u{2705}',
   error: '\u{2757}',
 }
