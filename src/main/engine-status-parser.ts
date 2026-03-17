@@ -162,6 +162,7 @@ function createBaseParser(engine: EngineType): {
   setPreview: (preview: string | null | undefined) => void
   clearError: () => void
   clearNeedInput: () => void
+  startTurnRunning: () => void
   startRunning: (toolName?: string | null) => void
   finishTool: () => void
   completeTurn: () => void
@@ -183,6 +184,16 @@ function createBaseParser(engine: EngineType): {
       state.lastError = null
     },
     clearNeedInput() {
+      state.needsInput = false
+      state.needsInputReason = null
+      state.needsInputEvidence = null
+      state.acknowledgedNeedInputAt = null
+    },
+    startTurnRunning() {
+      state.lastError = null
+      state.isRunning = true
+      state.unreadDone = false
+      state.activeToolName = null
       state.needsInput = false
       state.needsInputReason = null
       state.needsInputEvidence = null
@@ -237,6 +248,7 @@ export function createClaudeSemanticParser(): SemanticParser {
     setPreview,
     clearError,
     clearNeedInput,
+    startTurnRunning,
     startRunning,
     finishTool,
     completeTurn,
@@ -349,8 +361,17 @@ export function createClaudeSemanticParser(): SemanticParser {
       clearError()
       const content = record.message?.content
       const blocks = Array.isArray(content) ? content : []
-      if (blocks.length === 0 && typeof content === 'string' && content.trim()) {
-        clearNeedInput()
+      const userText =
+        typeof content === 'string'
+          ? content.trim()
+          : blocks
+              .filter((block) => block.type === 'text' && block.text)
+              .map((block) => block.text ?? '')
+              .join('\n')
+              .trim()
+      const hasToolResultBlock = blocks.some((block) => block.type === 'tool_result')
+      if (userText && !hasToolResultBlock) {
+        startTurnRunning()
         finishTool()
         pendingPlanHandoffCandidate = null
         return
@@ -404,6 +425,7 @@ export function createCodexSemanticParser(): SemanticParser {
     setPreview,
     clearError,
     clearNeedInput,
+    startTurnRunning,
     startRunning,
     finishTool,
     completeTurn,
@@ -462,6 +484,15 @@ export function createCodexSemanticParser(): SemanticParser {
       if (
         record.type === 'response_item' &&
         record.payload?.type === 'message' &&
+        record.payload.role === 'user'
+      ) {
+        startTurnRunning()
+        return
+      }
+
+      if (
+        record.type === 'response_item' &&
+        record.payload?.type === 'message' &&
         record.payload.role === 'assistant'
       ) {
         const text =
@@ -513,7 +544,7 @@ export function createCodexSemanticParser(): SemanticParser {
         const callId = record.payload?.call_id
         if (callId) activeCalls.delete(callId)
         if (callId && state.needsInputEvidence?.anchorId === callId) {
-          clearNeedInput()
+          startTurnRunning()
         }
         if (activeCalls.size === 0) {
           finishTool()

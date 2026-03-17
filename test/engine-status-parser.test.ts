@@ -5,6 +5,43 @@ import {
 } from '../src/main/engine-status-parser'
 
 describe('createClaudeSemanticParser', () => {
+  test('starts running immediately when a new Claude user turn begins after done', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'Previous turn finished.' }],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      unreadDone: true,
+    })
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: 'Please update the marker behavior.',
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      activeToolName: null,
+      unreadDone: false,
+      needsInput: false,
+    })
+  })
+
   test('tracks running tool activity and emits done for normal turn completion', () => {
     const parser = createClaudeSemanticParser()
 
@@ -1000,6 +1037,26 @@ describe('createCodexSemanticParser', () => {
         anchorType: 'require_escalated',
         anchorId: 'call_escalated',
       },
+    })
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'function_call_output',
+          call_id: 'call_escalated',
+          output: 'approved',
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      activeToolName: null,
+      unreadDone: false,
+      needsInput: false,
+      needsInputReason: null,
+      needsInputEvidence: null,
     })
   })
 
