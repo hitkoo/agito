@@ -4,6 +4,8 @@ import { join } from 'path'
 import {
   buildInitialRuntimeState,
   deriveCharacterMarkerStatus,
+  hasVisibleNeedInput,
+  shouldAcknowledgeNeedInputOnAttention,
   shouldClearDoneOnAttention,
   shouldScheduleDoneAutoClear,
   type CharacterRuntimeState,
@@ -171,6 +173,7 @@ export class CharacterRuntimeService {
     if (!entry) return
 
     const wasAttentionActive = entry.state.attentionActive
+    const hadVisibleNeedInput = hasVisibleNeedInput(entry.state)
     entry.state.attentionActive = attentionActive
 
     if (
@@ -186,6 +189,17 @@ export class CharacterRuntimeService {
 
     if (entry.state.lastError && !wasAttentionActive && attentionActive) {
       entry.state.lastError = null
+    }
+
+    if (
+      hadVisibleNeedInput &&
+      shouldAcknowledgeNeedInputOnAttention({
+        needsInput: entry.state.needsInput,
+        wasAttentionActive,
+        isAttentionActive: attentionActive,
+      })
+    ) {
+      entry.state.acknowledgedNeedInputAt = Date.now()
     }
 
     this.syncDoneAutoClear(entry)
@@ -276,12 +290,16 @@ export class CharacterRuntimeService {
       return
     }
 
+    const acknowledgedNeedInputAt = entry.state.acknowledgedNeedInputAt
     entry.state.isRunning = parserState.isRunning
     entry.state.activeToolName = parserState.activeToolName
     entry.state.lastAssistantPreview = parserState.lastAssistantPreview
     entry.state.lastTurnEndedAt = parserState.lastTurnEndedAt
     entry.state.lastError = parserState.lastError
     entry.state.needsInput = parserState.needsInput
+    entry.state.needsInputReason = parserState.needsInputReason
+    entry.state.needsInputEvidence = parserState.needsInputEvidence
+    entry.state.acknowledgedNeedInputAt = parserState.needsInput ? acknowledgedNeedInputAt : null
     entry.state.unreadDone =
       !options.suppressUnreadDone &&
       !entry.state.needsInput &&

@@ -8,6 +8,16 @@ export type CharacterMarkerStatus =
   | 'done'
   | 'error'
 
+export type NeedInputReason = 'question' | 'approval' | 'plan_handoff'
+
+export interface NeedInputEvidence {
+  strength: 'explicit' | 'contextual'
+  engine: Extract<EngineType, 'claude-code' | 'codex'>
+  anchorType: string
+  anchorId?: string
+  detectedAt: number
+}
+
 export interface CharacterRuntimeState {
   characterId: string
   engine: EngineType | null
@@ -21,6 +31,9 @@ export interface CharacterRuntimeState {
   lastTurnEndedAt: number | null
   lastAssistantPreview: string | null
   lastError: string | null
+  needsInputReason: NeedInputReason | null
+  needsInputEvidence: NeedInputEvidence | null
+  acknowledgedNeedInputAt: number | null
 }
 
 interface BuildInitialRuntimeStateOptions {
@@ -28,19 +41,6 @@ interface BuildInitialRuntimeStateOptions {
   engine: EngineType | null
   sessionId?: string | null
 }
-
-const INPUT_REQUEST_PATTERNS = [
-  /\?\s*$/u,
-  /\bwhich\b/iu,
-  /\bwhat should\b/iu,
-  /\bhow should\b/iu,
-  /\bwhat would you like\b/iu,
-  /\bplease choose\b/iu,
-  /\blet me know\b/iu,
-  /\bshould i\b/iu,
-  /\bwaiting for your\b/iu,
-  /\bconfirmation\b/iu,
-]
 
 export function buildInitialRuntimeState(
   options: BuildInitialRuntimeStateOptions
@@ -59,18 +59,18 @@ export function buildInitialRuntimeState(
     lastTurnEndedAt: null,
     lastAssistantPreview: null,
     lastError: null,
+    needsInputReason: null,
+    needsInputEvidence: null,
+    acknowledgedNeedInputAt: null,
   }
 }
 
-export function classifyAssistantPreview(
-  preview: string | null | undefined
-): 'need_input' | 'done' {
-  const text = (preview ?? '').trim()
-  if (!text) return 'done'
-  if (INPUT_REQUEST_PATTERNS.some((pattern) => pattern.test(text))) {
-    return 'need_input'
-  }
-  return 'done'
+export function hasVisibleNeedInput(
+  state: Pick<CharacterRuntimeState, 'needsInput' | 'needsInputEvidence' | 'acknowledgedNeedInputAt'>
+): boolean {
+  if (!state.needsInput || !state.needsInputEvidence) return false
+  if (state.acknowledgedNeedInputAt === null) return true
+  return state.needsInputEvidence.detectedAt > state.acknowledgedNeedInputAt
 }
 
 export function deriveCharacterMarkerStatus(
@@ -78,7 +78,7 @@ export function deriveCharacterMarkerStatus(
 ): CharacterMarkerStatus {
   if (state.sessionId === null) return 'no_session'
   if (state.lastError) return 'error'
-  if (state.needsInput) return 'need_input'
+  if (hasVisibleNeedInput(state)) return 'need_input'
   if (state.isRunning) return 'running'
   if (state.unreadDone) return 'done'
   return 'idle'
@@ -98,6 +98,14 @@ export function shouldClearDoneOnAttention(input: {
   isAttentionActive: boolean
 }): boolean {
   return input.unreadDone && !input.wasAttentionActive && input.isAttentionActive
+}
+
+export function shouldAcknowledgeNeedInputOnAttention(input: {
+  needsInput: boolean
+  wasAttentionActive: boolean
+  isAttentionActive: boolean
+}): boolean {
+  return input.needsInput && !input.wasAttentionActive && input.isAttentionActive
 }
 
 export function shouldScheduleDoneAutoClear(input: {

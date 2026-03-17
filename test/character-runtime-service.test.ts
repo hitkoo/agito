@@ -53,7 +53,7 @@ describe('CharacterRuntimeService', () => {
     service.stopSession('char-codex')
   })
 
-  test('hydrates bound session status during sync without requiring terminal open or resume', () => {
+  test('hydrates explicit Codex need_input anchors during sync without requiring terminal open or resume', () => {
     const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
     const transcriptDir = join(fakeHome, '.codex', 'sessions', '2026', '03', '17')
     mkdirSync(transcriptDir, { recursive: true })
@@ -64,17 +64,12 @@ describe('CharacterRuntimeService', () => {
       [
         JSON.stringify({
           timestamp: '2026-03-17T00:00:00.000Z',
-          type: 'event_msg',
+          type: 'response_item',
           payload: {
-            type: 'agent_message',
-            message: 'Waiting for your confirmation.',
-          },
-        }),
-        JSON.stringify({
-          timestamp: '2026-03-17T00:00:01.000Z',
-          type: 'event_msg',
-          payload: {
-            type: 'task_complete',
+            type: 'function_call',
+            name: 'request_user_input',
+            arguments: '{"questions":[{"question":"Proceed?"}]}',
+            call_id: 'call_sync_question',
           },
         }),
       ].join('\n') + '\n'
@@ -114,8 +109,8 @@ describe('CharacterRuntimeService', () => {
     expect(service.getState('char-sync')).toMatchObject({
       markerStatus: 'need_input',
       needsInput: true,
+      needsInputReason: 'question',
       unreadDone: false,
-      lastAssistantPreview: 'Waiting for your confirmation.',
     })
 
     service.stopSession('char-sync')
@@ -239,5 +234,83 @@ describe('CharacterRuntimeService', () => {
     })
 
     service.stopSession('char-error')
+  })
+
+  test('acknowledges need_input on attention without erasing the underlying anchor', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.codex', 'sessions', '2026', '03', '17')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-codex-attention'
+    writeFileSync(
+      join(transcriptDir, `rollout-${sessionId}.jsonl`),
+      JSON.stringify({
+        timestamp: '2026-03-17T00:00:00.000Z',
+        type: 'response_item',
+        payload: {
+          type: 'function_call',
+          name: 'request_user_input',
+          arguments: '{"questions":[{"question":"Proceed?"}]}',
+          call_id: 'call_attention_question',
+        },
+      }) + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-attention',
+        name: 'attention',
+        soul: '',
+        skin: '',
+        engine: 'codex',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2026-03-17T00:00:00.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-attention',
+        sessionId,
+        engineType: 'codex',
+        workingDirectory: '/tmp/project',
+        createdAt: '2026-03-17T00:00:00.000Z',
+        lastActiveAt: '2026-03-17T00:00:01.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({ homeDirectory: fakeHome })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-attention')).toMatchObject({
+      markerStatus: 'need_input',
+      needsInput: true,
+      needsInputReason: 'question',
+      acknowledgedNeedInputAt: null,
+    })
+
+    service.setAttention('char-attention', true)
+
+    expect(service.getState('char-attention')).toMatchObject({
+      markerStatus: 'idle',
+      needsInput: true,
+      needsInputReason: 'question',
+    })
+    expect(service.getState('char-attention')?.acknowledgedNeedInputAt).toEqual(expect.any(Number))
+
+    service.setAttention('char-attention', false)
+
+    expect(service.getState('char-attention')).toMatchObject({
+      markerStatus: 'idle',
+      needsInput: true,
+      needsInputReason: 'question',
+    })
+
+    service.stopSession('char-attention')
   })
 })

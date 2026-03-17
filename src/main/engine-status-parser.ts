@@ -1,7 +1,8 @@
 import {
   buildInitialRuntimeState,
-  classifyAssistantPreview,
   type CharacterRuntimeState,
+  type NeedInputEvidence,
+  type NeedInputReason,
 } from '../shared/character-runtime-state'
 import type { EngineType } from '../shared/types'
 
@@ -15,16 +16,26 @@ interface ClaudeMessageBlock {
   text?: string
   id?: string
   name?: string
+  tool_use_id?: string
+  content?: unknown
+  is_error?: boolean
 }
 
 interface ClaudeRecord {
   type?: string
+  permissionMode?: string
   message?: {
     role?: string
     stop_reason?: string | null
-    content?: ClaudeMessageBlock[]
+    content?: ClaudeMessageBlock[] | string
   }
+  toolUseResult?: unknown
   error?: string
+}
+
+interface CodexMessagePart {
+  type?: string
+  text?: string
 }
 
 interface CodexRecord {
@@ -35,17 +46,105 @@ interface CodexRecord {
     message?: string
     name?: string
     call_id?: string
+    arguments?: string
+    collaboration_mode_kind?: string
+    collaboration_mode?: {
+      mode?: string
+    }
+    role?: string
+    phase?: string
+    content?: CodexMessagePart[]
   }
+}
+
+function buildNeedInputEvidence(
+  engine: Extract<EngineType, 'claude-code' | 'codex'>,
+  strength: NeedInputEvidence['strength'],
+  anchorType: string,
+  anchorId?: string
+): NeedInputEvidence {
+  return {
+    strength,
+    engine,
+    anchorType,
+    anchorId,
+    detectedAt: Date.now(),
+  }
+}
+
+function parseJsonObject(raw: string | undefined): Record<string, unknown> | null {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function getCodexMessageText(parts: CodexMessagePart[] | undefined): string | null {
+  if (!Array.isArray(parts)) return null
+  const text = parts
+    .map((part) => part.text ?? '')
+    .join('\n')
+    .trim()
+  return text || null
+}
+
+function extractClaudeToolResultText(record: ClaudeRecord, block: ClaudeMessageBlock): string {
+  if (typeof block.content === 'string') return block.content
+  if (typeof record.toolUseResult === 'string') return record.toolUseResult
+  return ''
+}
+
+function isClaudeApprovalPendingText(text: string): boolean {
+  const normalized = text.toLowerCase()
+  return (
+    normalized.includes('requires approval') ||
+    normalized.includes("haven't granted it yet") ||
+    normalized.includes('have not granted it yet') ||
+    normalized.includes('requested permissions to')
+  )
+}
+
+function isClaudePermissionDeniedText(text: string): boolean {
+  return text.toLowerCase().includes('permission for this tool use was denied')
+}
+
+function hasClaudePlanArtifact(record: ClaudeRecord): boolean {
+  if (!record.toolUseResult || typeof record.toolUseResult !== 'object') return false
+  const value = record.toolUseResult as Record<string, unknown>
+  if (typeof value.plan === 'string' && value.plan.trim()) return true
+  return typeof value.filePath === 'string' && value.filePath.includes('/.claude/plans/')
+}
+
+function isCodexPlanModeRecord(record: CodexRecord): boolean {
+  if (record.type === 'event_msg' && record.payload?.collaboration_mode_kind) {
+    return record.payload.collaboration_mode_kind === 'plan'
+  }
+  if (record.type === 'turn_context') {
+    return record.payload?.collaboration_mode?.mode === 'plan'
+  }
+  return false
+}
+
+function messageContainsProposedPlan(record: CodexRecord): boolean {
+  const text =
+    record.payload?.message ??
+    record.payload?.text ??
+    getCodexMessageText(record.payload?.content)
+  return typeof text === 'string' && text.includes('<proposed_plan>')
 }
 
 function createBaseParser(engine: EngineType): {
   state: CharacterRuntimeState
   setPreview: (preview: string | null | undefined) => void
   clearError: () => void
+  clearNeedInput: () => void
   startRunning: (toolName?: string | null) => void
   finishTool: () => void
   completeTurn: () => void
   setError: (message: string) => void
+  setNeedInput: (reason: NeedInputReason, evidence: NeedInputEvidence) => void
 } {
   const state = buildInitialRuntimeState({
     characterId: `parser:${engine}`,
@@ -61,12 +160,21 @@ function createBaseParser(engine: EngineType): {
     clearError() {
       state.lastError = null
     },
+    clearNeedInput() {
+      state.needsInput = false
+      state.needsInputReason = null
+      state.needsInputEvidence = null
+      state.acknowledgedNeedInputAt = null
+    },
     startRunning(toolName) {
       state.lastError = null
       state.isRunning = true
       state.unreadDone = false
-      state.needsInput = false
       state.activeToolName = toolName ?? state.activeToolName
+      state.needsInput = false
+      state.needsInputReason = null
+      state.needsInputEvidence = null
+      state.acknowledgedNeedInputAt = null
     },
     finishTool() {
       state.activeToolName = null
@@ -76,24 +184,46 @@ function createBaseParser(engine: EngineType): {
       state.isRunning = false
       state.activeToolName = null
       state.lastTurnEndedAt = Date.now()
-      const completionKind = classifyAssistantPreview(state.lastAssistantPreview)
-      state.needsInput = completionKind === 'need_input'
-      state.unreadDone = completionKind === 'done'
+      state.unreadDone = !state.needsInput
     },
     setError(message) {
       state.isRunning = false
       state.unreadDone = false
       state.needsInput = false
+      state.needsInputReason = null
+      state.needsInputEvidence = null
+      state.acknowledgedNeedInputAt = null
       state.activeToolName = null
       state.lastError = message
+    },
+    setNeedInput(reason, evidence) {
+      state.lastError = null
+      state.isRunning = false
+      state.unreadDone = false
+      state.activeToolName = null
+      state.needsInput = true
+      state.needsInputReason = reason
+      state.needsInputEvidence = evidence
+      state.lastTurnEndedAt = Date.now()
     },
   }
 }
 
 export function createClaudeSemanticParser(): SemanticParser {
-  const { state, setPreview, clearError, startRunning, finishTool, completeTurn, setError } =
-    createBaseParser('claude-code')
-  const activeTools = new Set<string>()
+  const {
+    state,
+    setPreview,
+    clearError,
+    clearNeedInput,
+    startRunning,
+    finishTool,
+    completeTurn,
+    setError,
+    setNeedInput,
+  } = createBaseParser('claude-code')
+  const activeTools = new Map<string, string>()
+  let planModeActive = false
+  let sawPlanArtifact = false
 
   return {
     ingestLine(line: string): void {
@@ -104,13 +234,17 @@ export function createClaudeSemanticParser(): SemanticParser {
         return
       }
 
+      if (typeof record.permissionMode === 'string') {
+        planModeActive = record.permissionMode === 'plan'
+      }
+
       if (record.error) {
         setError(record.error)
         return
       }
 
       if (record.type === 'assistant') {
-        const blocks = record.message?.content ?? []
+        const blocks = Array.isArray(record.message?.content) ? record.message.content : []
         const text = blocks
           .filter((block) => block.type === 'text' && block.text)
           .map((block) => block.text ?? '')
@@ -122,33 +256,78 @@ export function createClaudeSemanticParser(): SemanticParser {
         }
 
         for (const block of blocks) {
-          if (block.type === 'tool_use' && block.id) {
-            activeTools.add(block.id)
+          if (block.type !== 'tool_use' || !block.id) continue
+          activeTools.set(block.id, block.name ?? 'tool')
+          if (block.name === 'AskUserQuestion') {
             setPreview(null)
-            startRunning(block.name ?? 'tool')
+            setNeedInput(
+              'question',
+              buildNeedInputEvidence('claude-code', 'explicit', 'ask_user_question', block.id)
+            )
+            continue
           }
+          setPreview(null)
+          startRunning(block.name ?? 'tool')
         }
 
         if (record.message?.stop_reason === 'end_turn') {
+          if (planModeActive && sawPlanArtifact) {
+            sawPlanArtifact = false
+            setNeedInput(
+              'plan_handoff',
+              buildNeedInputEvidence('claude-code', 'contextual', 'plan_artifact')
+            )
+            state.lastAssistantPreview = text || state.lastAssistantPreview
+            return
+          }
           completeTurn()
         }
         return
       }
 
-      if (record.type === 'user') {
-        clearError()
-        const blocks = record.message?.content ?? []
-        for (const block of blocks) {
-          if (block.type === 'tool_result') {
-            const toolUseId = block.id ?? (block as ClaudeMessageBlock & { tool_use_id?: string }).tool_use_id
-            if (toolUseId) {
-              activeTools.delete(toolUseId)
-            }
-          }
+      if (record.type !== 'user') return
+
+      clearError()
+      const content = record.message?.content
+      const blocks = Array.isArray(content) ? content : []
+      if (blocks.length === 0 && typeof content === 'string' && content.trim()) {
+        clearNeedInput()
+        finishTool()
+        sawPlanArtifact = false
+        return
+      }
+
+      for (const block of blocks) {
+        if (block.type !== 'tool_result') continue
+        const toolUseId = block.tool_use_id ?? block.id
+        const toolName = toolUseId ? activeTools.get(toolUseId) : null
+        if (toolUseId) {
+          activeTools.delete(toolUseId)
         }
-        if (activeTools.size === 0) {
-          finishTool()
+
+        const text = extractClaudeToolResultText(record, block)
+
+        if (toolName === 'AskUserQuestion') {
+          clearNeedInput()
         }
+
+        if (hasClaudePlanArtifact(record)) {
+          clearNeedInput()
+          sawPlanArtifact = true
+        }
+
+        if (block.is_error && isClaudeApprovalPendingText(text)) {
+          setNeedInput(
+            'approval',
+            buildNeedInputEvidence('claude-code', 'explicit', 'permission_request', toolUseId)
+          )
+        } else if (block.is_error && isClaudePermissionDeniedText(text)) {
+          clearNeedInput()
+        }
+      }
+
+      if (activeTools.size === 0) {
+        finishTool()
       }
     },
     getState(): CharacterRuntimeState {
@@ -158,9 +337,20 @@ export function createClaudeSemanticParser(): SemanticParser {
 }
 
 export function createCodexSemanticParser(): SemanticParser {
-  const { state, setPreview, clearError, startRunning, finishTool, completeTurn, setError } =
-    createBaseParser('codex')
+  const {
+    state,
+    setPreview,
+    clearError,
+    clearNeedInput,
+    startRunning,
+    finishTool,
+    completeTurn,
+    setError,
+    setNeedInput,
+  } = createBaseParser('codex')
   const activeCalls = new Set<string>()
+  let planModeActive = false
+  let sawProposedPlan = false
 
   return {
     ingestLine(line: string): void {
@@ -171,9 +361,15 @@ export function createCodexSemanticParser(): SemanticParser {
         return
       }
 
+      if (record.type === 'turn_context') {
+        planModeActive = isCodexPlanModeRecord(record)
+      }
+
       const payloadType = record.payload?.type
 
       if (record.type === 'event_msg' && payloadType === 'task_started') {
+        planModeActive = isCodexPlanModeRecord(record)
+        sawProposedPlan = false
         startRunning()
         return
       }
@@ -185,6 +381,13 @@ export function createCodexSemanticParser(): SemanticParser {
       }
 
       if (record.type === 'event_msg' && payloadType === 'task_complete') {
+        if (planModeActive && sawProposedPlan && activeCalls.size === 0) {
+          setNeedInput(
+            'plan_handoff',
+            buildNeedInputEvidence('codex', 'contextual', 'proposed_plan')
+          )
+          return
+        }
         completeTurn()
         return
       }
@@ -194,9 +397,48 @@ export function createCodexSemanticParser(): SemanticParser {
         return
       }
 
+      if (
+        record.type === 'response_item' &&
+        record.payload?.type === 'message' &&
+        record.payload.role === 'assistant'
+      ) {
+        const text =
+          record.payload.message ??
+          record.payload.text ??
+          getCodexMessageText(record.payload.content)
+        if (text) {
+          setPreview(text)
+        }
+        if (messageContainsProposedPlan(record)) {
+          sawProposedPlan = true
+        }
+        return
+      }
+
       if (record.type === 'response_item' && payloadType === 'function_call') {
         const callId = record.payload?.call_id
         if (callId) activeCalls.add(callId)
+        const args = parseJsonObject(record.payload?.arguments)
+
+        if (record.payload?.name === 'request_user_input') {
+          setNeedInput(
+            'question',
+            buildNeedInputEvidence('codex', 'explicit', 'request_user_input', callId)
+          )
+          return
+        }
+
+        if (
+          record.payload?.name === 'exec_command' &&
+          args?.sandbox_permissions === 'require_escalated'
+        ) {
+          setNeedInput(
+            'approval',
+            buildNeedInputEvidence('codex', 'explicit', 'require_escalated', callId)
+          )
+          return
+        }
+
         startRunning(record.payload?.name ?? 'tool')
         return
       }
@@ -208,6 +450,9 @@ export function createCodexSemanticParser(): SemanticParser {
         clearError()
         const callId = record.payload?.call_id
         if (callId) activeCalls.delete(callId)
+        if (callId && state.needsInputEvidence?.anchorId === callId) {
+          clearNeedInput()
+        }
         if (activeCalls.size === 0) {
           finishTool()
         }

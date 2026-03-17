@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   buildInitialRuntimeState,
   deriveCharacterMarkerStatus,
+  shouldAcknowledgeNeedInputOnAttention,
   shouldClearDoneOnAttention,
   shouldScheduleDoneAutoClear,
 } from '../src/shared/character-runtime-state'
@@ -29,6 +30,13 @@ describe('deriveCharacterMarkerStatus', () => {
         isRunning: true,
         unreadDone: true,
         needsInput: true,
+        needsInputReason: 'question',
+        needsInputEvidence: {
+          strength: 'explicit',
+          engine: 'claude-code',
+          anchorType: 'ask_user_question',
+          detectedAt: 100,
+        },
       })
     ).toBe('need_input')
   })
@@ -84,6 +92,48 @@ describe('deriveCharacterMarkerStatus', () => {
       })
     ).toBe('error')
   })
+
+  test('hides need_input after the same anchor is acknowledged via attention', () => {
+    expect(
+      deriveCharacterMarkerStatus({
+        ...buildInitialRuntimeState({
+          characterId: 'char-1',
+          engine: 'claude-code',
+          sessionId: 'session-1',
+        }),
+        needsInput: true,
+        needsInputReason: 'approval',
+        needsInputEvidence: {
+          strength: 'explicit',
+          engine: 'claude-code',
+          anchorType: 'permission_request',
+          detectedAt: 100,
+        },
+        acknowledgedNeedInputAt: 100,
+      })
+    ).toBe('idle')
+  })
+
+  test('re-shows need_input when a newer anchor arrives after acknowledgement', () => {
+    expect(
+      deriveCharacterMarkerStatus({
+        ...buildInitialRuntimeState({
+          characterId: 'char-1',
+          engine: 'claude-code',
+          sessionId: 'session-1',
+        }),
+        needsInput: true,
+        needsInputReason: 'approval',
+        needsInputEvidence: {
+          strength: 'explicit',
+          engine: 'claude-code',
+          anchorType: 'permission_request',
+          detectedAt: 101,
+        },
+        acknowledgedNeedInputAt: 100,
+      })
+    ).toBe('need_input')
+  })
 })
 
 describe('done attention handling', () => {
@@ -109,6 +159,24 @@ describe('done attention handling', () => {
       shouldScheduleDoneAutoClear({
         unreadDone: true,
         isAttentionActive: false,
+      })
+    ).toBe(false)
+  })
+
+  test('acknowledges visible need_input when attention is newly acquired', () => {
+    expect(
+      shouldAcknowledgeNeedInputOnAttention({
+        needsInput: true,
+        wasAttentionActive: false,
+        isAttentionActive: true,
+      })
+    ).toBe(true)
+
+    expect(
+      shouldAcknowledgeNeedInputOnAttention({
+        needsInput: true,
+        wasAttentionActive: true,
+        isAttentionActive: true,
       })
     ).toBe(false)
   })
