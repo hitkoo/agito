@@ -252,6 +252,110 @@ describe('CharacterRuntimeService', () => {
     service.stopSession('char-stop-hook')
   })
 
+  test('hydrates Claude turn_duration completions as idle on startup even without end_turn', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-claude-turn-duration'
+    writeFileSync(
+      join(transcriptDir, `${sessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu_turn_duration_startup',
+                name: 'Bash',
+                input: { command: 'pnpm build' },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_turn_duration_startup',
+                content: 'ok',
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: null,
+            content: [{ type: 'text', text: 'Build verification passed.' }],
+          },
+        }),
+        JSON.stringify({
+          type: 'progress',
+          toolUseID: 'toolu_turn_duration_stop',
+          parentToolUseID: 'toolu_turn_duration_stop',
+          data: {
+            type: 'hook_progress',
+            hookEvent: 'Stop',
+          },
+        }),
+        JSON.stringify({
+          type: 'system',
+          subtype: 'turn_duration',
+          durationMs: 1000,
+        }),
+      ].join('\n') + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-turn-duration',
+        name: 'turn-duration',
+        soul: '',
+        skin: '',
+        engine: 'claude-code',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2026-03-18T00:00:00.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-turn-duration',
+        sessionId,
+        engineType: 'claude-code',
+        workingDirectory: '/tmp/project',
+        createdAt: '2026-03-18T00:00:00.000Z',
+        lastActiveAt: '2026-03-18T00:00:01.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({ homeDirectory: fakeHome })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-turn-duration')).toMatchObject({
+      markerStatus: 'idle',
+      isRunning: false,
+      activeToolName: null,
+      unreadDone: false,
+      lastAssistantPreview: 'Build verification passed.',
+    })
+
+    service.stopSession('char-turn-duration')
+  })
+
   test('clears transient transcript errors when attention is acquired', () => {
     const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
     const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')

@@ -369,6 +369,114 @@ describe('createClaudeSemanticParser', () => {
     })
   })
 
+  test('completes a Claude turn when turn_duration follows assistant text without end_turn', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_turn_duration',
+              name: 'Bash',
+              input: { command: 'pnpm build' },
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_turn_duration',
+              content: 'ok',
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: null,
+          content: [{ type: 'text', text: 'Build verification passed.' }],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      unreadDone: false,
+      lastAssistantPreview: 'Build verification passed.',
+    })
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'system',
+        subtype: 'turn_duration',
+        durationMs: 1000,
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      activeToolName: null,
+      unreadDone: true,
+      needsInput: false,
+      lastAssistantPreview: 'Build verification passed.',
+    })
+  })
+
+  test('does not let Claude turn_duration override an existing need_input state', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_question_turn_duration',
+              name: 'AskUserQuestion',
+              input: { questions: [{ question: 'Proceed?' }] },
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'system',
+        subtype: 'turn_duration',
+        durationMs: 1000,
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      unreadDone: false,
+      needsInput: true,
+      needsInputReason: 'question',
+    })
+  })
+
   test('reopens running from Claude agent progress after a completed turn', () => {
     const parser = createClaudeSemanticParser()
 

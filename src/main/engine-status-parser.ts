@@ -37,6 +37,7 @@ interface ClaudeMessageBlock {
 interface ClaudeRecord {
   timestamp?: string | number
   type?: string
+  subtype?: string
   permissionMode?: string
   data?: {
     type?: string
@@ -302,6 +303,7 @@ export function createClaudeSemanticParser(): SemanticParser {
   let planModeActive = false
   let pendingPlanHandoffCandidate: { sourceToolUseId?: string } | null = null
   let pendingNeedInputCandidate: PendingNeedInputCandidate | null = null
+  let sawAssistantActivityThisTurn = false
 
   const clearPendingNeedInputCandidate = (toolUseId?: string | null): void => {
     if (!pendingNeedInputCandidate) return
@@ -326,6 +328,7 @@ export function createClaudeSemanticParser(): SemanticParser {
       if (record.error) {
         pendingPlanHandoffCandidate = null
         pendingNeedInputCandidate = null
+        sawAssistantActivityThisTurn = false
         setError(record.error)
         return
       }
@@ -394,6 +397,9 @@ export function createClaudeSemanticParser(): SemanticParser {
         }
 
         const hasThinkingBlock = blocks.some((block) => block.type === 'thinking')
+        if (text || hasThinkingBlock || hasToolUseBlock) {
+          sawAssistantActivityThisTurn = true
+        }
         if (text) {
           setPreview(text)
           startRunning()
@@ -427,6 +433,19 @@ export function createClaudeSemanticParser(): SemanticParser {
 
         if (record.message?.stop_reason === 'end_turn') {
           completeTurn()
+          sawAssistantActivityThisTurn = false
+        }
+        return
+      }
+
+      if (record.type === 'system' && record.subtype === 'turn_duration') {
+        if (
+          sawAssistantActivityThisTurn &&
+          !state.lastError &&
+          !state.needsInput
+        ) {
+          completeTurn()
+          sawAssistantActivityThisTurn = false
         }
         return
       }
@@ -449,12 +468,14 @@ export function createClaudeSemanticParser(): SemanticParser {
         finishTool()
         pendingPlanHandoffCandidate = null
         pendingNeedInputCandidate = null
+        sawAssistantActivityThisTurn = false
         setError('interrupted_by_user')
         return
       }
 
       clearError()
       if (userText && !hasToolResultBlock) {
+        sawAssistantActivityThisTurn = false
         startTurnRunning()
         finishTool()
         pendingPlanHandoffCandidate = null
