@@ -9,6 +9,19 @@ import type { EngineType } from '../shared/types'
 interface SemanticParser {
   ingestLine(line: string): void
   getState(): CharacterRuntimeState
+  getMeta(): SemanticParserMeta
+}
+
+interface PendingNeedInputCandidate {
+  reason: NeedInputReason
+  engine: Extract<EngineType, 'claude-code' | 'codex'>
+  anchorType: string
+  anchorId?: string
+  detectedAt: number
+}
+
+interface SemanticParserMeta {
+  pendingNeedInputCandidate: PendingNeedInputCandidate | null
 }
 
 interface ClaudeMessageBlock {
@@ -22,6 +35,7 @@ interface ClaudeMessageBlock {
 }
 
 interface ClaudeRecord {
+  timestamp?: string | number
   type?: string
   permissionMode?: string
   data?: {
@@ -78,6 +92,22 @@ function buildNeedInputEvidence(
   }
 }
 
+function buildPendingNeedInputCandidate(
+  engine: Extract<EngineType, 'claude-code' | 'codex'>,
+  reason: NeedInputReason,
+  anchorType: string,
+  detectedAt: number,
+  anchorId?: string
+): PendingNeedInputCandidate {
+  return {
+    reason,
+    engine,
+    anchorType,
+    anchorId,
+    detectedAt,
+  }
+}
+
 function parseJsonObject(raw: string | undefined): Record<string, unknown> | null {
   if (!raw) return null
   try {
@@ -85,6 +115,15 @@ function parseJsonObject(raw: string | undefined): Record<string, unknown> | nul
   } catch {
     return null
   }
+}
+
+function parseRecordTimestamp(value: string | number | undefined): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value)
+    if (!Number.isNaN(parsed)) return parsed
+  }
+  return Date.now()
 }
 
 function getCodexMessageText(parts: CodexMessagePart[] | undefined): string | null {
@@ -258,6 +297,14 @@ export function createClaudeSemanticParser(): SemanticParser {
   const activeTools = new Map<string, string>()
   let planModeActive = false
   let pendingPlanHandoffCandidate: { sourceToolUseId?: string } | null = null
+  let pendingNeedInputCandidate: PendingNeedInputCandidate | null = null
+
+  const clearPendingNeedInputCandidate = (toolUseId?: string | null): void => {
+    if (!pendingNeedInputCandidate) return
+    if (!toolUseId || !pendingNeedInputCandidate.anchorId || pendingNeedInputCandidate.anchorId === toolUseId) {
+      pendingNeedInputCandidate = null
+    }
+  }
 
   return {
     ingestLine(line: string): void {
@@ -274,14 +321,37 @@ export function createClaudeSemanticParser(): SemanticParser {
 
       if (record.error) {
         pendingPlanHandoffCandidate = null
+        pendingNeedInputCandidate = null
         setError(record.error)
         return
       }
 
       if (record.type === 'progress') {
         const progressType = record.data?.type
+        const progressToolUseId = record.toolUseID ?? record.parentToolUseID
+
+        if (progressType === 'hook_progress') {
+          if (record.data?.hookEvent === 'PreToolUse') {
+            const progressToolName = progressToolUseId ? activeTools.get(progressToolUseId) : null
+            const isApprovalHeuristicExempt =
+              progressToolName === 'Task' || progressToolName === 'AskUserQuestion'
+            if (progressToolName && !isApprovalHeuristicExempt) {
+              pendingNeedInputCandidate = buildPendingNeedInputCandidate(
+                'claude-code',
+                'approval',
+                'pre_tool_use',
+                parseRecordTimestamp(record.timestamp),
+                progressToolUseId ?? undefined
+              )
+            }
+          } else {
+            clearPendingNeedInputCandidate(progressToolUseId)
+          }
+          return
+        }
+
         if (!state.needsInput && isClaudeRunningProgressType(progressType)) {
-          const progressToolUseId = record.toolUseID ?? record.parentToolUseID
+          clearPendingNeedInputCandidate(progressToolUseId)
           const progressToolName =
             (progressToolUseId ? activeTools.get(progressToolUseId) : null) ??
             state.activeToolName ??
@@ -297,6 +367,7 @@ export function createClaudeSemanticParser(): SemanticParser {
       }
 
       if (record.type === 'assistant') {
+        pendingNeedInputCandidate = null
         const blocks = Array.isArray(record.message?.content) ? record.message.content : []
         const text = blocks
           .filter((block) => block.type === 'text' && block.text)
@@ -374,6 +445,7 @@ export function createClaudeSemanticParser(): SemanticParser {
         startTurnRunning()
         finishTool()
         pendingPlanHandoffCandidate = null
+        pendingNeedInputCandidate = null
         return
       }
 
@@ -384,6 +456,7 @@ export function createClaudeSemanticParser(): SemanticParser {
         if (toolUseId) {
           activeTools.delete(toolUseId)
         }
+        clearPendingNeedInputCandidate(toolUseId)
 
         const text = extractClaudeToolResultText(record, block)
 
@@ -400,11 +473,13 @@ export function createClaudeSemanticParser(): SemanticParser {
         }
 
         if (block.is_error && isClaudeApprovalPendingText(text)) {
+          pendingNeedInputCandidate = null
           setNeedInput(
             'approval',
             buildNeedInputEvidence('claude-code', 'explicit', 'permission_request', toolUseId)
           )
         } else if (block.is_error && isClaudePermissionDeniedText(text)) {
+          pendingNeedInputCandidate = null
           clearNeedInput()
         }
       }
@@ -415,6 +490,13 @@ export function createClaudeSemanticParser(): SemanticParser {
     },
     getState(): CharacterRuntimeState {
       return { ...state }
+    },
+    getMeta(): SemanticParserMeta {
+      return {
+        pendingNeedInputCandidate: pendingNeedInputCandidate
+          ? { ...pendingNeedInputCandidate }
+          : null,
+      }
     },
   }
 }
@@ -553,6 +635,11 @@ export function createCodexSemanticParser(): SemanticParser {
     },
     getState(): CharacterRuntimeState {
       return { ...state }
+    },
+    getMeta(): SemanticParserMeta {
+      return {
+        pendingNeedInputCandidate: null,
+      }
     },
   }
 }

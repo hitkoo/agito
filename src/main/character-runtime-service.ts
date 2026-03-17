@@ -22,6 +22,15 @@ const TRANSCRIPT_POLL_MS = 500
 interface SemanticParser {
   ingestLine(line: string): void
   getState(): CharacterRuntimeState
+  getMeta(): {
+    pendingNeedInputCandidate: {
+      reason: 'approval' | 'question' | 'plan_handoff'
+      engine: 'claude-code' | 'codex'
+      anchorType: string
+      anchorId?: string
+      detectedAt: number
+    } | null
+  }
 }
 
 interface RuntimeEntry {
@@ -30,6 +39,13 @@ interface RuntimeEntry {
   transcriptPath: string | null
   transcriptPollTimer: ReturnType<typeof setInterval> | null
   doneTimer: ReturnType<typeof setTimeout> | null
+  approvalTimer: ReturnType<typeof setTimeout> | null
+  approvalCandidate: SemanticParser['getMeta'] extends () => infer T
+    ? T extends { pendingNeedInputCandidate: infer C }
+      ? C
+      : never
+    : never
+  approvalEvidence: CharacterRuntimeState['needsInputEvidence']
   fileOffset: number
   lineBuffer: string
 }
@@ -63,6 +79,9 @@ function createEntry(characterId: string, engine: EngineType | null, sessionId: 
     transcriptPath: null,
     transcriptPollTimer: null,
     doneTimer: null,
+    approvalTimer: null,
+    approvalCandidate: null,
+    approvalEvidence: null,
     fileOffset: 0,
     lineBuffer: '',
   }
@@ -72,9 +91,11 @@ export class CharacterRuntimeService {
   private readonly entries = new Map<string, RuntimeEntry>()
   private readonly listeners = new Set<RuntimeUpdateListener>()
   private readonly homeDirectory: string
+  private readonly approvalHeuristicDelayMs: number
 
-  constructor(options?: { homeDirectory?: string }) {
+  constructor(options?: { homeDirectory?: string; approvalHeuristicDelayMs?: number }) {
     this.homeDirectory = options?.homeDirectory ?? homedir()
+    this.approvalHeuristicDelayMs = options?.approvalHeuristicDelayMs ?? 7000
   }
 
   onUpdate(listener: RuntimeUpdateListener): () => void {
@@ -224,6 +245,8 @@ export class CharacterRuntimeService {
       engine,
       sessionId,
     })
+    entry.approvalCandidate = null
+    entry.approvalEvidence = null
     entry.fileOffset = 0
     entry.lineBuffer = ''
   }
@@ -285,28 +308,110 @@ export class CharacterRuntimeService {
     options: { suppressUnreadDone?: boolean } = {}
   ): void {
     const parserState = entry.parser?.getState()
+    const parserMeta = entry.parser?.getMeta()
     if (!parserState) {
       this.updateState(entry)
       return
     }
 
+    this.syncApprovalHeuristic(entry, parserMeta?.pendingNeedInputCandidate ?? null)
+
     const acknowledgedNeedInputAt = entry.state.acknowledgedNeedInputAt
+    const heuristicNeedInput =
+      !parserState.needsInput && entry.approvalEvidence?.strength === 'heuristic'
+        ? entry.approvalEvidence
+        : null
+    const effectiveNeedsInput = parserState.needsInput || Boolean(heuristicNeedInput)
+
     entry.state.isRunning = parserState.isRunning
     entry.state.activeToolName = parserState.activeToolName
     entry.state.lastAssistantPreview = parserState.lastAssistantPreview
     entry.state.lastTurnEndedAt = parserState.lastTurnEndedAt
     entry.state.lastError = parserState.lastError
-    entry.state.needsInput = parserState.needsInput
-    entry.state.needsInputReason = parserState.needsInputReason
-    entry.state.needsInputEvidence = parserState.needsInputEvidence
-    entry.state.acknowledgedNeedInputAt = parserState.needsInput ? acknowledgedNeedInputAt : null
+    entry.state.needsInput = effectiveNeedsInput
+    entry.state.needsInputReason = parserState.needsInput
+      ? parserState.needsInputReason
+      : heuristicNeedInput
+        ? 'approval'
+        : null
+    entry.state.needsInputEvidence = parserState.needsInput
+      ? parserState.needsInputEvidence
+      : heuristicNeedInput
+    entry.state.acknowledgedNeedInputAt = effectiveNeedsInput ? acknowledgedNeedInputAt : null
     entry.state.unreadDone =
       !options.suppressUnreadDone &&
-      !entry.state.needsInput &&
+      !effectiveNeedsInput &&
       parserState.unreadDone
+
+    if (heuristicNeedInput) {
+      entry.state.isRunning = false
+      entry.state.activeToolName = null
+      entry.state.unreadDone = false
+    }
 
     this.syncDoneAutoClear(entry)
     this.updateState(entry)
+  }
+
+  private syncApprovalHeuristic(
+    entry: RuntimeEntry,
+    candidate: RuntimeEntry['approvalCandidate']
+  ): void {
+    if (!candidate || candidate.reason !== 'approval' || candidate.engine !== 'claude-code') {
+      this.clearApprovalHeuristic(entry)
+      return
+    }
+
+    const current = entry.approvalCandidate
+    const isSameCandidate =
+      current?.anchorId === candidate.anchorId &&
+      current?.anchorType === candidate.anchorType &&
+      current?.detectedAt === candidate.detectedAt
+
+    entry.approvalCandidate = candidate
+
+    if (isSameCandidate) {
+      return
+    }
+
+    this.clearApprovalTimer(entry)
+    entry.approvalEvidence = null
+
+    const elapsedMs = Math.max(0, Date.now() - candidate.detectedAt)
+    const remainingMs = this.approvalHeuristicDelayMs - elapsedMs
+
+    if (remainingMs <= 0) {
+      this.fireApprovalHeuristic(entry, candidate)
+      return
+    }
+
+    entry.approvalTimer = setTimeout(() => {
+      entry.approvalTimer = null
+      const latest = entry.approvalCandidate
+      if (
+        !latest ||
+        latest.anchorId !== candidate.anchorId ||
+        latest.anchorType !== candidate.anchorType ||
+        latest.detectedAt !== candidate.detectedAt
+      ) {
+        return
+      }
+      this.fireApprovalHeuristic(entry, latest)
+    }, remainingMs)
+  }
+
+  private fireApprovalHeuristic(
+    entry: RuntimeEntry,
+    candidate: NonNullable<RuntimeEntry['approvalCandidate']>
+  ): void {
+    entry.approvalEvidence = {
+      strength: 'heuristic',
+      engine: 'claude-code',
+      anchorType: 'pre_tool_use_timeout',
+      anchorId: candidate.anchorId,
+      detectedAt: Date.now(),
+    }
+    this.syncFromParser(entry)
   }
 
   private syncDoneAutoClear(entry: RuntimeEntry): void {
@@ -340,10 +445,24 @@ export class CharacterRuntimeService {
       clearTimeout(entry.doneTimer)
       entry.doneTimer = null
     }
+    this.clearApprovalHeuristic(entry)
     if (entry.transcriptPollTimer) {
       clearInterval(entry.transcriptPollTimer)
       entry.transcriptPollTimer = null
     }
+  }
+
+  private clearApprovalTimer(entry: RuntimeEntry): void {
+    if (entry.approvalTimer) {
+      clearTimeout(entry.approvalTimer)
+      entry.approvalTimer = null
+    }
+  }
+
+  private clearApprovalHeuristic(entry: RuntimeEntry): void {
+    this.clearApprovalTimer(entry)
+    entry.approvalCandidate = null
+    entry.approvalEvidence = null
   }
 
   private attachTranscript(entry: RuntimeEntry, transcriptPath: string): void {

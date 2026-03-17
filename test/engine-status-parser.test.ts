@@ -548,6 +548,108 @@ describe('createClaudeSemanticParser', () => {
     })
   })
 
+  test('tracks a pending Claude approval candidate after PreToolUse for non-exempt tools', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        timestamp: '2026-03-17T18:01:10.522Z',
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_pending_approval',
+              name: 'Bash',
+              input: { command: 'pnpm build 2>&1 | tail -5' },
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        timestamp: '2026-03-17T18:01:10.536Z',
+        type: 'progress',
+        toolUseID: 'toolu_pending_approval',
+        data: {
+          type: 'hook_progress',
+          hookEvent: 'PreToolUse',
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      activeToolName: 'Bash',
+      needsInput: false,
+    })
+    expect(parser.getMeta()).toMatchObject({
+      pendingNeedInputCandidate: {
+        reason: 'approval',
+        engine: 'claude-code',
+        anchorType: 'pre_tool_use',
+        anchorId: 'toolu_pending_approval',
+      },
+    })
+  })
+
+  test('clears a pending Claude approval candidate once real tool execution progress begins', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_pending_approval',
+              name: 'Bash',
+              input: { command: 'pnpm build 2>&1 | tail -5' },
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'progress',
+        toolUseID: 'toolu_pending_approval',
+        data: {
+          type: 'hook_progress',
+          hookEvent: 'PreToolUse',
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'progress',
+        toolUseID: 'toolu_pending_approval',
+        data: {
+          type: 'bash_progress',
+          status: 'running',
+        },
+      })
+    )
+
+    expect(parser.getMeta()).toMatchObject({
+      pendingNeedInputCandidate: null,
+    })
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      activeToolName: 'Bash',
+      needsInput: false,
+    })
+  })
+
   test('does not classify denied Claude permissions as need_input', () => {
     const parser = createClaudeSemanticParser()
 

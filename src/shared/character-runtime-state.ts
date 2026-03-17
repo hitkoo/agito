@@ -11,7 +11,7 @@ export type CharacterMarkerStatus =
 export type NeedInputReason = 'question' | 'approval' | 'plan_handoff'
 
 export interface NeedInputEvidence {
-  strength: 'explicit' | 'contextual'
+  strength: 'explicit' | 'contextual' | 'heuristic'
   engine: Extract<EngineType, 'claude-code' | 'codex'>
   anchorType: string
   anchorId?: string

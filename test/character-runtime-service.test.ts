@@ -389,4 +389,188 @@ describe('CharacterRuntimeService', () => {
 
     service.stopSession('char-attention')
   })
+
+  test('promotes stalled Claude PreToolUse approval waits into heuristic need_input after a timeout', async () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-claude-approval-timeout'
+    writeFileSync(
+      join(transcriptDir, `${sessionId}.jsonl`),
+      [
+        JSON.stringify({
+          timestamp: '2026-03-18T02:01:10.522Z',
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu_approval_timeout',
+                name: 'Bash',
+                input: { command: 'pnpm build 2>&1 | tail -5' },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-03-18T02:01:10.536Z',
+          type: 'progress',
+          toolUseID: 'toolu_approval_timeout',
+          data: {
+            type: 'hook_progress',
+            hookEvent: 'PreToolUse',
+          },
+        }),
+      ].join('\n') + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-approval-timeout',
+        name: 'approval-timeout',
+        soul: '',
+        skin: '',
+        engine: 'claude-code',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2026-03-18T02:01:10.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-approval-timeout',
+        sessionId,
+        engineType: 'claude-code',
+        workingDirectory: '/tmp/project',
+        createdAt: '2026-03-18T02:01:10.000Z',
+        lastActiveAt: '2026-03-18T02:01:10.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({
+      homeDirectory: fakeHome,
+      approvalHeuristicDelayMs: 10,
+    })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-approval-timeout')).toMatchObject({
+      markerStatus: 'running',
+      activeToolName: 'Bash',
+      needsInput: false,
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 25))
+
+    expect(service.getState('char-approval-timeout')).toMatchObject({
+      markerStatus: 'need_input',
+      isRunning: false,
+      activeToolName: null,
+      needsInput: true,
+      needsInputReason: 'approval',
+      needsInputEvidence: {
+        strength: 'heuristic',
+        engine: 'claude-code',
+        anchorType: 'pre_tool_use_timeout',
+        anchorId: 'toolu_approval_timeout',
+      },
+    })
+
+    service.stopSession('char-approval-timeout')
+  })
+
+  test('hydrates stale Claude PreToolUse approval waits as heuristic need_input immediately on startup', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-claude-approval-startup'
+    writeFileSync(
+      join(transcriptDir, `${sessionId}.jsonl`),
+      [
+        JSON.stringify({
+          timestamp: '2000-01-01T00:00:00.000Z',
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu_approval_startup',
+                name: 'Bash',
+                input: { command: 'pnpm build 2>&1 | tail -5' },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2000-01-01T00:00:00.100Z',
+          type: 'progress',
+          toolUseID: 'toolu_approval_startup',
+          data: {
+            type: 'hook_progress',
+            hookEvent: 'PreToolUse',
+          },
+        }),
+      ].join('\n') + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-approval-startup',
+        name: 'approval-startup',
+        soul: '',
+        skin: '',
+        engine: 'claude-code',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2000-01-01T00:00:00.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-approval-startup',
+        sessionId,
+        engineType: 'claude-code',
+        workingDirectory: '/tmp/project',
+        createdAt: '2000-01-01T00:00:00.000Z',
+        lastActiveAt: '2000-01-01T00:00:01.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({
+      homeDirectory: fakeHome,
+      approvalHeuristicDelayMs: 50,
+    })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-approval-startup')).toMatchObject({
+      markerStatus: 'need_input',
+      isRunning: false,
+      activeToolName: null,
+      needsInput: true,
+      needsInputReason: 'approval',
+      needsInputEvidence: {
+        strength: 'heuristic',
+        engine: 'claude-code',
+        anchorType: 'pre_tool_use_timeout',
+        anchorId: 'toolu_approval_startup',
+      },
+    })
+
+    service.stopSession('char-approval-startup')
+  })
 })
