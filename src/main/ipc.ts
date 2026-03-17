@@ -78,11 +78,11 @@ export function registerIPCHandlers(
   const runtimeService = new CharacterRuntimeService()
   const credentialStore = createCredentialStore(store.getBasePath())
   const authProvider: AuthProviderAdapter<StoredAuthSession> = (
-    process.env.AGITO_SUPABASE_URL && process.env.AGITO_SUPABASE_ANON_KEY
+    process.env.AGITO_SUPABASE_URL && process.env.AGITO_SUPABASE_PUBLISHABLE_KEY
   )
     ? new SupabaseAuthProvider({
         supabaseUrl: process.env.AGITO_SUPABASE_URL,
-        supabaseAnonKey: process.env.AGITO_SUPABASE_ANON_KEY,
+        supabasePublishableKey: process.env.AGITO_SUPABASE_PUBLISHABLE_KEY,
         isPackaged: app.isPackaged,
         protocolScheme: options?.authProtocolScheme ?? 'agito',
         waitForDeepLinkCallback: options?.authDeepLinkCoordinator
@@ -93,17 +93,17 @@ export function registerIPCHandlers(
     : {
         restoreSession: async () => null,
         signInWithEmail: async () => {
-          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_ANON_KEY.')
+          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_PUBLISHABLE_KEY.')
         },
         signUpWithEmail: async () => {
-          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_ANON_KEY.')
+          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_PUBLISHABLE_KEY.')
         },
         signInWithGoogle: async () => {
-          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_ANON_KEY.')
+          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_PUBLISHABLE_KEY.')
         },
         signOut: async () => {},
         sendPasswordReset: async () => {
-          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_ANON_KEY.')
+          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_PUBLISHABLE_KEY.')
         },
       }
   const authService = new MainAuthService({

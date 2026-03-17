@@ -16,7 +16,7 @@ import {
 
 interface SupabaseAuthProviderOptions {
   supabaseUrl: string
-  supabaseAnonKey: string
+  supabasePublishableKey: string
   isPackaged: boolean
   protocolScheme: string
   waitForDeepLinkCallback?: () => Promise<OAuthCallbackPayload>
@@ -103,7 +103,7 @@ export class SupabaseAuthProvider implements AuthProviderAdapter<StoredAuthSessi
   private readonly resetPasswordRedirectUrl?: string
 
   constructor(options: SupabaseAuthProviderOptions) {
-    this.client = createClient(options.supabaseUrl, options.supabaseAnonKey, {
+    this.client = createClient(options.supabaseUrl, options.supabasePublishableKey, {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
