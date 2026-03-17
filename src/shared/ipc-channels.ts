@@ -5,6 +5,7 @@ export const IPC_EVENTS = {
   CHARACTER_RUNTIME: 'character:runtime',
   STORE_UPDATED: 'store:updated',
   ASSET_GENERATE_PROGRESS: 'asset:generate-progress',
+  AUTH_SESSION_CHANGED: 'auth:session-changed',
 } as const
 
 // Renderer -> Main commands (invoke)
@@ -58,6 +59,14 @@ export const IPC_COMMANDS = {
   // Settings
   SETTINGS_READ: 'settings:read',
   SETTINGS_WRITE: 'settings:write',
+  // Auth
+  AUTH_GET_SESSION: 'auth:get-session',
+  AUTH_SIGN_UP_EMAIL: 'auth:sign-up-email',
+  AUTH_SIGN_IN_EMAIL: 'auth:sign-in-email',
+  AUTH_SIGN_IN_GOOGLE: 'auth:sign-in-google',
+  AUTH_SIGN_OUT: 'auth:sign-out',
+  AUTH_SEND_PASSWORD_RESET: 'auth:send-password-reset',
+  AUTH_REFRESH_SESSION: 'auth:refresh-session',
   // Terminal dock detach/attach
   TERMINAL_DOCK_DETACH: 'terminal-dock:detach',
   TERMINAL_DOCK_ATTACH: 'terminal-dock:attach',

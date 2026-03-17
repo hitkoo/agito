@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from 'react'
 import { useCharacterStore } from './stores/character-store'
+import { useAuthStore } from './stores/auth-store'
 import { useRuntimeStore } from './stores/runtime-store'
 import { useRoomStore } from './stores/room-store'
 import { useUIStore } from './stores/ui-store'
@@ -65,12 +66,14 @@ import { ItemPalette } from './components/ItemPalette'
 import { LayoutContextMenu } from './components/LayoutContextMenu'
 import { SettingsPanel } from './components/SettingsPanel'
 import { GeneratePanel } from './components/GeneratePanel'
+import { AuthDialog } from './components/AuthDialog'
 import { Toaster } from 'sonner'
 
 export default function App(): JSX.Element {
   const activeTab = useUIStore((s) => s.activeTab)
   const setTheme = useUIStore((s) => s.setTheme)
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
+  const loadAuth = useAuthStore((s) => s.loadFromMain)
   const loadRuntime = useRuntimeStore((s) => s.loadFromMain)
   const loadRoom = useRoomStore((s) => s.loadFromMain)
 
@@ -83,10 +86,11 @@ export default function App(): JSX.Element {
   }, [])
 
   useEffect(() => {
+    loadAuth()
     loadCharacters()
     loadRuntime()
     loadRoom()
-  }, [loadCharacters, loadRoom, loadRuntime])
+  }, [loadAuth, loadCharacters, loadRoom, loadRuntime])
 
   const setDraggingManifestId = useUIStore((s) => s.setDraggingManifestId)
 
@@ -160,6 +164,7 @@ export default function App(): JSX.Element {
     <div className="flex h-full w-full">
       <Toaster position="top-center" richColors theme="dark" />
       <Sidebar />
+      <AuthDialog />
       <main className="flex-1 flex h-full overflow-hidden relative">
         <div
           onDragOver={handleDragOver}

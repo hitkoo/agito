@@ -1,21 +1,19 @@
 import {
-  Zap,
-  Users,
-  LayoutGrid,
+  type LucideIcon,
   Settings,
   Sparkles,
   ChevronLeft,
   ChevronRight,
   House,
   LandPlot,
-  UserRoundPen,
   UsersRound,
 } from "lucide-react";
 import { useUIStore, type AppTab } from "../stores/ui-store";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
+import { SidebarAccountEntry } from "./SidebarAccountEntry";
 
-const tabs: { id: AppTab; icon: typeof Zap; label: string }[] = [
+const tabs: { id: AppTab; icon: LucideIcon; label: string }[] = [
   { id: "runtime", icon: House, label: "Home" },
   { id: "layout", icon: LandPlot, label: "Placement" },
   { id: "characters", icon: UsersRound, label: "Characters" },
@@ -79,21 +77,7 @@ export function Sidebar(): JSX.Element {
           <Settings className="h-4 w-4 shrink-0" />
           {sidebarExpanded && <span className="truncate">Settings</span>}
         </Button>
-        {/* <Button
-          variant="ghost"
-          className={cn(
-            "w-full",
-            sidebarExpanded ? "justify-start px-3" : "justify-center px-0",
-          )}
-          onClick={toggleSidebar}
-          title={sidebarExpanded ? "Collapse sidebar" : "Expand sidebar"}
-        >
-          {sidebarExpanded ? (
-            <ChevronLeft className="h-4 w-4 shrink-0" />
-          ) : (
-            <ChevronRight className="h-4 w-4 shrink-0" />
-          )}
-        </Button> */}
+        <SidebarAccountEntry expanded={sidebarExpanded} />
       </div>
     </div>
   );

@@ -4,10 +4,13 @@ import { useCharacterStore } from '../stores/character-store'
 import type { CharacterStatus } from '../../../shared/types'
 import type { CharacterRuntimeState } from '../../../shared/character-runtime-state'
 import { useRuntimeStore } from '../stores/runtime-store'
+import { useAuthStore } from '../stores/auth-store'
+import type { AuthSessionState } from '../../../shared/auth'
 
 export function useIPCSync(): void {
   const updateStatus = useCharacterStore((s) => s.updateStatus)
   const updateRuntimeState = useRuntimeStore((s) => s.updateState)
+  const setAuthSession = useAuthStore((s) => s.setSession)
   const lastStatusRef = useRef<Map<string, { status: CharacterStatus; time: number }>>(new Map())
 
   useEffect(() => {
@@ -45,10 +48,18 @@ export function useIPCSync(): void {
       }
     )
 
+    const unsubAuth = window.api.on(
+      IPC_EVENTS.AUTH_SESSION_CHANGED,
+      (payload: unknown) => {
+        setAuthSession(payload as AuthSessionState)
+      }
+    )
+
     return () => {
       unsubStatus()
       unsubRuntime()
       unsubStore()
+      unsubAuth()
     }
-  }, [updateRuntimeState, updateStatus])
+  }, [setAuthSession, updateRuntimeState, updateStatus])
 }

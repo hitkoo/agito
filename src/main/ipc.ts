@@ -5,6 +5,7 @@ import { join, basename, extname } from 'path'
 import { homedir } from 'os'
 import { IPC_COMMANDS, IPC_EVENTS } from '../shared/ipc-channels'
 import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, AssetGenerateRequest, AssetGenerateResult, ScannedSession } from '../shared/types'
+import { canAccessGenerate, type AuthSessionState } from '../shared/auth'
 import type { AgitoStore } from './store'
 import { TerminalSessionService } from './terminal-session-service'
 import { GRID_COLS, GRID_ROWS, FOOTPRINTS, MAX_SESSION_HISTORY, ASSETS_DIR } from '../shared/constants'
@@ -12,6 +13,9 @@ import type { EngineAdapter } from './engine/types'
 import { claudeCodeAdapter } from './engine/claude-code'
 import { codexAdapter } from './engine/codex'
 import { CharacterRuntimeService } from './character-runtime-service'
+import { MainAuthService, type AuthProviderAdapter, type AuthProviderResult } from './auth/auth-service'
+import { createCredentialStore, type StoredAuthSession } from './auth/credential-store'
+import { SupabaseAuthProvider } from './auth/supabase-auth-provider'
 
 // 16ms PTY output batching (~60fps) to prevent xterm.js write() flooding
 const PTY_BATCH_MS = 16
@@ -65,6 +69,39 @@ function flushPtyData(characterId: string, broadcast: (event: string, payload: u
 export function registerIPCHandlers(store: AgitoStore): void {
   const terminalSessions = new TerminalSessionService()
   const runtimeService = new CharacterRuntimeService()
+  const credentialStore = createCredentialStore(store.getBasePath())
+  const authProvider: AuthProviderAdapter<StoredAuthSession> = (
+    process.env.AGITO_SUPABASE_URL && process.env.AGITO_SUPABASE_ANON_KEY
+  )
+    ? new SupabaseAuthProvider({
+        supabaseUrl: process.env.AGITO_SUPABASE_URL,
+        supabaseAnonKey: process.env.AGITO_SUPABASE_ANON_KEY,
+        resetPasswordRedirectUrl: process.env.AGITO_AUTH_RESET_REDIRECT_URL,
+      })
+    : {
+        restoreSession: async () => null,
+        signInWithEmail: async () => {
+          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_ANON_KEY.')
+        },
+        signUpWithEmail: async () => {
+          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_ANON_KEY.')
+        },
+        signInWithGoogle: async () => {
+          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_ANON_KEY.')
+        },
+        signOut: async () => {},
+        sendPasswordReset: async () => {
+          throw new Error('Auth is not configured. Set AGITO_SUPABASE_URL and AGITO_SUPABASE_ANON_KEY.')
+        },
+      }
+  const authService = new MainAuthService({
+    credentialStore,
+    provider: authProvider,
+  })
+  const authReady = authService.initialize().catch((error) => {
+    console.error('[AUTH] Failed to initialize session', error)
+    return authService.getState()
+  })
   app.once('before-quit', () => {
     terminalSessions.killAll()
   })
@@ -76,6 +113,9 @@ export function registerIPCHandlers(store: AgitoStore): void {
       characterId: state.characterId,
       status: state.markerStatus,
     })
+  })
+  authService.onUpdate((state) => {
+    broadcastToAll(IPC_EVENTS.AUTH_SESSION_CHANGED, state)
   })
 
   const buildStoreSnapshot = () => {
@@ -203,6 +243,52 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
   ipcMain.handle(IPC_COMMANDS.CHARACTER_RUNTIME_SNAPSHOT, () => {
     return runtimeService.getAllStates()
+  })
+
+  // --- Auth ---
+
+  ipcMain.handle(IPC_COMMANDS.AUTH_GET_SESSION, async () => {
+    await authReady
+    return authService.getState()
+  })
+
+  ipcMain.handle(
+    IPC_COMMANDS.AUTH_SIGN_IN_EMAIL,
+    async (_, args: { email: string; password: string }) => {
+      await authReady
+      return authService.signInWithEmail(args.email, args.password)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_COMMANDS.AUTH_SIGN_UP_EMAIL,
+    async (_, args: { email: string; password: string }) => {
+      await authReady
+      return authService.signUpWithEmail(args.email, args.password)
+    }
+  )
+
+  ipcMain.handle(IPC_COMMANDS.AUTH_SIGN_IN_GOOGLE, async () => {
+    await authReady
+    return authService.signInWithGoogle()
+  })
+
+  ipcMain.handle(IPC_COMMANDS.AUTH_SIGN_OUT, async () => {
+    await authReady
+    return authService.signOut()
+  })
+
+  ipcMain.handle(
+    IPC_COMMANDS.AUTH_SEND_PASSWORD_RESET,
+    async (_, args: { email: string }) => {
+      await authReady
+      await authService.sendPasswordReset(args.email)
+      return { success: true }
+    }
+  )
+
+  ipcMain.handle(IPC_COMMANDS.AUTH_REFRESH_SESSION, async () => {
+    return authService.initialize()
   })
 
   ipcMain.handle(
@@ -699,11 +785,33 @@ export function registerIPCHandlers(store: AgitoStore): void {
 
   ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE, async (_, req: AssetGenerateRequest) => {
     const baseUrl = getApiBaseUrl()
+    await authReady
+    const authState: AuthSessionState = authService.getState()
+    if (!canAccessGenerate(authState.status)) {
+      return {
+        success: false,
+        error:
+          authState.status === 'pending_verification'
+            ? 'Verify your email to use Generate.'
+            : 'Sign in to use Generate.',
+      }
+    }
+
+    const authSession = await credentialStore.getSession()
+    if (!authSession?.accessToken) {
+      return {
+        success: false,
+        error: 'Missing auth session. Sign in again to use Generate.',
+      }
+    }
 
     try {
       const res = await fetch(`${baseUrl}/api/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authSession.accessToken}`,
+        },
         body: JSON.stringify(req),
         signal: AbortSignal.timeout(300_000),
       })
