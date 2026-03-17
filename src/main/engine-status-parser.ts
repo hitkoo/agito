@@ -157,7 +157,16 @@ function isClaudePermissionDeniedText(text: string): boolean {
 }
 
 function isClaudeUserInterruptText(text: string): boolean {
-  return text.trim() === '[Request interrupted by user]'
+  const normalized = text.trim()
+  return (
+    normalized === '[Request interrupted by user]' ||
+    normalized === '[Request interrupted by user for tool use]'
+  )
+}
+
+function isClaudeToolUseRejectedText(text: string): boolean {
+  const normalized = text.trim()
+  return normalized.startsWith("The user doesn't want to proceed with this tool use.")
 }
 
 function hasClaudePlanArtifact(record: ClaudeRecord): boolean {
@@ -493,6 +502,14 @@ export function createClaudeSemanticParser(): SemanticParser {
         clearPendingNeedInputCandidate(toolUseId)
 
         const text = extractClaudeToolResultText(record, block)
+
+        if (block.is_error && isClaudeToolUseRejectedText(text)) {
+          pendingNeedInputCandidate = null
+          pendingPlanHandoffCandidate = null
+          sawAssistantActivityThisTurn = false
+          setError('interrupted_by_user')
+          continue
+        }
 
         if (toolName === 'AskUserQuestion') {
           clearNeedInput()

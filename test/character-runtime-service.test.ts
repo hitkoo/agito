@@ -766,4 +766,98 @@ describe('CharacterRuntimeService', () => {
 
     service.stopSession('char-interrupt')
   })
+
+  test('hydrates rejected Claude AskUserQuestion flows as error instead of running', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-claude-askquestion-rejected'
+    writeFileSync(
+      join(transcriptDir, `${sessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'tool_use',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu_question_rejected',
+                name: 'AskUserQuestion',
+                input: {
+                  questions: [{ question: 'status marker 변경사항 확인 완료했나요?' }],
+                },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_question_rejected',
+                is_error: true,
+                content:
+                  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+              },
+            ],
+          },
+          toolUseResult: 'User rejected tool use',
+        }),
+        JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }],
+          },
+        }),
+      ].join('\n') + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-askquestion-rejected',
+        name: 'askquestion-rejected',
+        soul: '',
+        skin: '',
+        engine: 'claude-code',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2026-03-17T18:36:47.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-askquestion-rejected',
+        sessionId,
+        engineType: 'claude-code',
+        workingDirectory: '/tmp/project',
+        createdAt: '2026-03-17T18:36:47.000Z',
+        lastActiveAt: '2026-03-17T18:37:10.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({ homeDirectory: fakeHome })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-askquestion-rejected')).toMatchObject({
+      markerStatus: 'error',
+      isRunning: false,
+      activeToolName: null,
+      needsInput: false,
+      lastError: 'interrupted_by_user',
+    })
+
+    service.stopSession('char-askquestion-rejected')
+  })
 })

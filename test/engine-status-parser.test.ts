@@ -717,6 +717,121 @@ describe('createClaudeSemanticParser', () => {
     })
   })
 
+  test('treats rejected Claude AskUserQuestion tool results as an explicit error instead of reopening running', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_question_rejected',
+              name: 'AskUserQuestion',
+              input: {
+                questions: [{ question: 'status marker 변경사항 확인 완료했나요?' }],
+              },
+            },
+          ],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      needsInput: true,
+      needsInputReason: 'question',
+    })
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_question_rejected',
+              is_error: true,
+              content:
+                "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+            },
+          ],
+        },
+        toolUseResult: 'User rejected tool use',
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      needsInput: false,
+      activeToolName: null,
+      lastError: 'interrupted_by_user',
+    })
+  })
+
+  test('treats Claude tool-use interrupt variant text as an explicit error instead of a new running turn', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_question_interrupt_variant',
+              name: 'AskUserQuestion',
+              input: {
+                questions: [{ question: 'status marker 변경사항 확인 완료했나요?' }],
+              },
+            },
+          ],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_question_interrupt_variant',
+              is_error: true,
+              content:
+                "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+            },
+          ],
+        },
+        toolUseResult: 'User rejected tool use',
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      needsInput: false,
+      activeToolName: null,
+      lastError: 'interrupted_by_user',
+    })
+  })
+
   test('tracks a pending Claude approval candidate after PreToolUse for non-exempt tools', () => {
     const parser = createClaudeSemanticParser()
 
