@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
+import { GripVertical } from 'lucide-react'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import { AGITO_DIR_NAME, MIN_GRID_COLS, MAX_GRID_COLS, MIN_GRID_ROWS, MAX_GRID_ROWS } from '../../../shared/constants'
+import { moveTerminalFontFamily, TERMINAL_FONT_SIZE_OPTIONS } from '../../../shared/settings'
 import { Label } from './ui/label'
 import { useUIStore, type ThemeMode } from '../stores/ui-store'
 import { useRoomStore } from '../stores/room-store'
+import { useSettingsStore } from '../stores/settings-store'
 
 interface EngineDetectResult {
   found: boolean
@@ -28,6 +31,10 @@ export function SettingsPanel(): JSX.Element {
   const setTheme = useUIStore((s) => s.setTheme)
   const gridCols = useRoomStore((s) => s.gridCols)
   const gridRows = useRoomStore((s) => s.gridRows)
+  const settings = useSettingsStore((s) => s.settings)
+  const setTerminalFontSize = useSettingsStore((s) => s.setTerminalFontSize)
+  const setTerminalFontFamilies = useSettingsStore((s) => s.setTerminalFontFamilies)
+  const [draggingFamily, setDraggingFamily] = useState<string | null>(null)
 
   const [engines, setEngines] = useState<EngineStatus[]>([
     { name: 'Claude Code', key: 'claude-code', result: null, loading: true },
@@ -133,6 +140,66 @@ export function SettingsPanel(): JSX.Element {
                 <span className="capitalize">{option}</span>
               </label>
             ))}
+          </div>
+        </section>
+
+        {/* Terminal Font */}
+        <section className="space-y-3">
+          <Label className="text-base font-semibold">Terminal Font</Label>
+
+          <div className="space-y-2">
+            <Label className="text-sm text-muted-foreground">Font Size</Label>
+            <select
+              value={settings.terminalFontSize}
+              onChange={(event) => {
+                void setTerminalFontSize(Number(event.target.value))
+              }}
+              className="h-10 w-full rounded-md border border-border bg-muted/30 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              {TERMINAL_FONT_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm text-muted-foreground">Font Family Order</Label>
+            <div className="rounded-md border border-border bg-muted/20">
+              {settings.terminalFontFamilies.map((family, index) => (
+                <div
+                  key={family}
+                  draggable
+                  onDragStart={() => setDraggingFamily(family)}
+                  onDragEnd={() => setDraggingFamily(null)}
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    if (!draggingFamily || draggingFamily === family) return
+                    void setTerminalFontFamilies(
+                      moveTerminalFontFamily(
+                        settings.terminalFontFamilies,
+                        draggingFamily,
+                        index,
+                      ),
+                    )
+                    setDraggingFamily(null)
+                  }}
+                  className={`flex cursor-grab items-center gap-3 border-b border-border/70 px-3 py-2 text-sm last:border-b-0 ${
+                    draggingFamily === family ? 'bg-muted/60' : 'bg-transparent'
+                  }`}
+                >
+                  <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{family}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Drag to reorder the fallback stack used by terminal panes.
+            </p>
           </div>
         </section>
 

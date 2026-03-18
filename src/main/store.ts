@@ -12,6 +12,7 @@ import {
   SETTINGS_FILE,
   DEFAULT_SETTINGS,
 } from '../shared/constants'
+import { resolveAgitoSettings } from '../shared/settings'
 import type {
   Character,
   RoomLayout,
@@ -212,14 +213,17 @@ export class AgitoStore {
 
   getSettings(): AgitoSettings {
     try {
-      return this.readJSON<AgitoSettings>(SETTINGS_FILE)
+      return resolveAgitoSettings(this.readJSON<AgitoSettings>(SETTINGS_FILE))
     } catch {
-      return { ...DEFAULT_SETTINGS }
+      return resolveAgitoSettings({
+        ...DEFAULT_SETTINGS,
+        terminalFontFamilies: [...DEFAULT_SETTINGS.terminalFontFamilies],
+      })
     }
   }
 
   saveSettings(settings: AgitoSettings): void {
-    this.writeJSON(SETTINGS_FILE, settings)
+    this.writeJSON(SETTINGS_FILE, resolveAgitoSettings(settings))
   }
 
   getAll(): AgitoPersistentData {

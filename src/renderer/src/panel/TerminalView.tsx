@@ -12,7 +12,9 @@ import {
   type TerminalReplayChunk,
 } from '../../../shared/terminal-dock-state'
 import type { EngineType } from '../../../shared/types'
+import { buildTerminalFontFamily } from '../../../shared/settings'
 import { electronTerminalTransport } from './terminal-transport'
+import { useSettingsStore } from '../stores/settings-store'
 
 interface TerminalViewProps {
   characterId: string
@@ -28,6 +30,9 @@ export function TerminalView({ characterId, engine }: TerminalViewProps): ReactE
   const loadingRef = useRef(true)
   const syncViewportRef = useRef<(focusTerminal: boolean) => void>(() => {})
   const [loading, setLoading] = useState(true)
+  const terminalFontFamilies = useSettingsStore((s) => s.settings.terminalFontFamilies)
+  const terminalFontSize = useSettingsStore((s) => s.settings.terminalFontSize)
+  const terminalFontFamily = buildTerminalFontFamily(terminalFontFamilies)
 
   useEffect(() => {
     setLoading(true)
@@ -51,8 +56,8 @@ export function TerminalView({ characterId, engine }: TerminalViewProps): ReactE
         cursor: hsl('--primary', '#7c7cfa'),
         selectionBackground: hsl('--muted', '#3a3a5a'),
       },
-      fontFamily: 'monospace',
-      fontSize: 13,
+      fontFamily: terminalFontFamily,
+      fontSize: terminalFontSize,
       cursorBlink: true,
       scrollback: 5000,
     })
@@ -276,13 +281,13 @@ export function TerminalView({ characterId, engine }: TerminalViewProps): ReactE
       fitAddonRef.current = null
       syncViewportRef.current = () => {}
     }
-  }, [characterId])
+  }, [characterId, terminalFontFamily, terminalFontSize])
 
   useEffect(() => {
     requestAnimationFrame(() => {
       syncViewportRef.current(true)
     })
-  }, [characterId])
+  }, [characterId, terminalFontFamily, terminalFontSize])
 
   return (
     <div className="h-full w-full min-h-0 overflow-hidden relative bg-background">

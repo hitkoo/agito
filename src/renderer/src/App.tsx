@@ -4,6 +4,7 @@ import { useAuthStore } from './stores/auth-store'
 import { useRuntimeStore } from './stores/runtime-store'
 import { useRoomStore } from './stores/room-store'
 import { useUIStore } from './stores/ui-store'
+import { useSettingsStore } from './stores/settings-store'
 import { IPC_COMMANDS } from '../../shared/ipc-channels'
 
 /**
@@ -75,6 +76,7 @@ export default function App(): JSX.Element {
   const loadAuth = useAuthStore((s) => s.loadFromMain)
   const loadRuntime = useRuntimeStore((s) => s.loadFromMain)
   const loadRoom = useRoomStore((s) => s.loadFromMain)
+  const loadSettings = useSettingsStore((s) => s.loadFromMain)
 
   useIPCSync()
   useTerminalDockSync()
@@ -89,7 +91,8 @@ export default function App(): JSX.Element {
     loadCharacters()
     loadRuntime()
     loadRoom()
-  }, [loadAuth, loadCharacters, loadRoom, loadRuntime])
+    loadSettings()
+  }, [loadAuth, loadCharacters, loadRoom, loadRuntime, loadSettings])
 
   const setDraggingManifestId = useUIStore((s) => s.setDraggingManifestId)
 

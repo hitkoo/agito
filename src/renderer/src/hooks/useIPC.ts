@@ -4,6 +4,7 @@ import { useCharacterStore } from '../stores/character-store'
 import type { CharacterRuntimeState } from '../../../shared/character-runtime-state'
 import { useRuntimeStore } from '../stores/runtime-store'
 import { useAuthStore } from '../stores/auth-store'
+import { useSettingsStore } from '../stores/settings-store'
 import type { AuthSessionState } from '../../../shared/auth'
 
 export function useIPCSync(): void {
@@ -20,7 +21,12 @@ export function useIPCSync(): void {
 
     const unsubStore = window.api.on(
       IPC_EVENTS.STORE_UPDATED,
-      () => {
+      (payload: unknown) => {
+        const key = (payload as { key?: string } | null)?.key
+        if (key === 'settings') {
+          void useSettingsStore.getState().loadFromMain()
+          return
+        }
         useCharacterStore.getState().loadFromMain()
         useRuntimeStore.getState().loadFromMain()
       }

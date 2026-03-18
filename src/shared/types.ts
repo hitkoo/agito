@@ -124,6 +124,8 @@ export interface AgitoPersistentData {
 
 export interface AgitoSettings {
   defaultSpriteSize: number
+  terminalFontFamilies: string[]
+  terminalFontSize: number
 }
 
 // --- Terminal Dock ---

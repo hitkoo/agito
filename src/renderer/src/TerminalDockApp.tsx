@@ -3,6 +3,7 @@ import { useIPCSync } from './hooks/useIPC'
 import { readTerminalDockSyncState, useTerminalDockSync } from './hooks/useTerminalDockSync'
 import { useTheme, getPersistedTheme } from './hooks/useTheme'
 import { useCharacterStore } from './stores/character-store'
+import { useSettingsStore } from './stores/settings-store'
 import { useUIStore } from './stores/ui-store'
 import { TerminalDock } from './panel/TerminalDock'
 import { Toaster } from 'sonner'
@@ -13,6 +14,7 @@ import { Toaster } from 'sonner'
  */
 export function TerminalDockApp(): JSX.Element {
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
+  const loadSettings = useSettingsStore((s) => s.loadFromMain)
   const syncTerminalDock = useUIStore((s) => s.syncTerminalDock)
   const setTheme = useUIStore((s) => s.setTheme)
 
@@ -28,13 +30,14 @@ export function TerminalDockApp(): JSX.Element {
       const state = await readTerminalDockSyncState()
       if (cancelled) return
       syncTerminalDock(state)
+      void loadSettings()
       void loadCharacters()
     })()
 
     return () => {
       cancelled = true
     }
-  }, [loadCharacters, setTheme, syncTerminalDock])
+  }, [loadCharacters, loadSettings, setTheme, syncTerminalDock])
 
   return (
     <div className="flex flex-col h-full w-full bg-background text-foreground">

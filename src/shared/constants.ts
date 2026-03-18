@@ -32,8 +32,20 @@ export const SUPPORTED_ENGINES = ['claude-code', 'codex'] as const
 
 // Settings
 export const SETTINGS_FILE = 'settings.json'
+export const TERMINAL_FONT_FAMILY_OPTIONS = [
+  'SF Mono',
+  'JetBrains Mono',
+  'Commit Mono',
+  'Iosevka',
+  'Monaspace Neon',
+  'Maple Mono',
+  'monospace',
+] as const
+export const TERMINAL_FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16] as const
 export const DEFAULT_SETTINGS = {
   defaultSpriteSize: 64,
+  terminalFontFamilies: [...TERMINAL_FONT_FAMILY_OPTIONS],
+  terminalFontSize: 13,
 } as const
 
 export const ASSET_SIZES = [32, 64, 128] as const
