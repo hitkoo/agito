@@ -64,7 +64,7 @@ import {
   getCharacterStatusBadgeState,
   getCharacterDockPresence,
   getClosedCharacters,
-  getOpenCharactersInGlobalOrder,
+  getMinimizedCharacters,
   getSurfaceDropInsertIndex,
   getSurfaceReorderIndexFromDropTarget,
   getLayoutForGlobalCharacterSessionAction,
@@ -337,6 +337,9 @@ export function TerminalDock(): ReactElement | null {
       TERMINAL_DOCK_BAR_HEIGHT_STORAGE_KEY,
       String(barHeight),
     );
+    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_SET_MINIMIZED_HEIGHT, {
+      height: barHeight,
+    });
   }, [barHeight]);
 
   useEffect(() => {
@@ -360,12 +363,6 @@ export function TerminalDock(): ReactElement | null {
         if (nextHeight !== minimizedResizeState.lastHeight) {
           minimizedResizeState.lastHeight = nextHeight;
           setBarHeight(nextHeight);
-          void window.api.invoke(
-            IPC_COMMANDS.TERMINAL_DOCK_SET_MINIMIZED_HEIGHT,
-            {
-              height: nextHeight,
-            },
-          );
         }
       }
     };
@@ -569,7 +566,7 @@ export function TerminalDock(): ReactElement | null {
   );
 
   const minimizedCharacters = useMemo(() => {
-    return getOpenCharactersInGlobalOrder(characters, dock.layout);
+    return getMinimizedCharacters(characters, dock.layout);
   }, [characters, dock.layout]);
 
   if (renderMode === "hidden") return null;

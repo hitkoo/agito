@@ -53,6 +53,14 @@ export function getOpenCharactersInGlobalOrder(
   return characters.filter((character) => openIds.has(character.id))
 }
 
+export function getMinimizedCharacters(
+  characters: Character[],
+  layout: DockLayout
+): Character[] {
+  const openCharacters = getOpenCharactersInGlobalOrder(characters, layout)
+  return openCharacters.length > 0 ? openCharacters : characters
+}
+
 export function getCharacterDockPresence(
   layout: DockLayout,
   characterId: string

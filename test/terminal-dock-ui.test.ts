@@ -11,6 +11,7 @@ import {
   getCharacterStatusBadgeState,
   getCharacterDockPresence,
   getClosedCharacters,
+  getMinimizedCharacters,
   getOpenCharactersInGlobalOrder,
   getCharacterStatusIndicator,
   getSurfaceReorderIndexFromDropTarget,
@@ -54,6 +55,30 @@ describe('getOpenCharactersInGlobalOrder', () => {
     const characters = [makeCharacter('char-1'), makeCharacter('char-2'), makeCharacter('char-3')]
 
     expect(getOpenCharactersInGlobalOrder(characters, layout).map((character) => character.id)).toEqual([
+      'char-1',
+      'char-3',
+    ])
+  })
+})
+
+describe('getMinimizedCharacters', () => {
+  test('falls back to the full global footer order when no character is open', () => {
+    const layout = createEmptyDockLayout()
+    const characters = [makeCharacter('char-1'), makeCharacter('char-2'), makeCharacter('char-3')]
+
+    expect(getMinimizedCharacters(characters, layout).map((character) => character.id)).toEqual([
+      'char-1',
+      'char-2',
+      'char-3',
+    ])
+  })
+
+  test('keeps only open characters when at least one tab exists', () => {
+    let layout = ensureCharacterSurface(createEmptyDockLayout(), 'char-3')
+    layout = ensureCharacterSurface(layout, 'char-1')
+    const characters = [makeCharacter('char-1'), makeCharacter('char-2'), makeCharacter('char-3')]
+
+    expect(getMinimizedCharacters(characters, layout).map((character) => character.id)).toEqual([
       'char-1',
       'char-3',
     ])

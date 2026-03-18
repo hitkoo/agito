@@ -113,6 +113,11 @@ app.whenReady().then(() => {
     }
   }
 
+  const syncDetachedDockState = (): void => {
+    if (!detachedTerminalWindow || detachedTerminalWindow.isDestroyed()) return
+    syncDockState([detachedTerminalWindow])
+  }
+
   const updateDockLayout = (layout: DockLayout): void => {
     dockSyncState = {
       ...dockSyncState,
@@ -130,8 +135,11 @@ app.whenReady().then(() => {
     const workArea = display.workArea
     const maxWidth = Math.max(96, display.workArea.width - 32)
     const nextHeight = clampTerminalDockBarHeight(savedMinimizedDockHeight)
+    const openCharacterCount = listOpenCharacterIds(dockSyncState.layout).length
+    const visibleCharacterCount =
+      openCharacterCount > 0 ? openCharacterCount : store.getCharacters().length
     const nextWidth = getFittedMinimizedDockWidth({
-      characterCount: listOpenCharacterIds(dockSyncState.layout).length,
+      characterCount: visibleCharacterCount,
       height: nextHeight,
       maxWidth,
     })
@@ -154,16 +162,19 @@ app.whenReady().then(() => {
     if (typeof options?.height === 'number') {
       savedMinimizedDockHeight = clampTerminalDockBarHeight(options.height)
     }
+    dockSyncState = { ...dockSyncState, visible: true, minimized: true }
+    syncDetachedDockState()
     detachedTerminalWindow.setAlwaysOnTop(true, 'floating')
     detachedTerminalWindow.setResizable(false)
     applyMinimizedDockBounds()
-    dockSyncState = { ...dockSyncState, visible: true, minimized: true }
     syncDockState()
   }
 
   const restoreDetachedDockWindow = (): void => {
     if (!detachedTerminalWindow || detachedTerminalWindow.isDestroyed()) return
 
+    dockSyncState = { ...dockSyncState, minimized: false }
+    syncDetachedDockState()
     const currentBounds = detachedTerminalWindow.getBounds()
     const display = screen.getDisplayMatching(currentBounds)
     detachedTerminalWindow.setBounds(
@@ -176,7 +187,6 @@ app.whenReady().then(() => {
     )
     detachedTerminalWindow.setAlwaysOnTop(false)
     detachedTerminalWindow.setResizable(true)
-    dockSyncState = { ...dockSyncState, minimized: false }
   }
 
   const createDetachedDockWindow = (): BrowserWindow => {
