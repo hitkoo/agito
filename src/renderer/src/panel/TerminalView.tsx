@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ReactElement } from 'react'
+import type { DragEvent, ReactElement } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -14,7 +14,13 @@ import {
 import type { EngineType } from '../../../shared/types'
 import { buildTerminalFontFamily } from '../../../shared/settings'
 import { electronTerminalTransport } from './terminal-transport'
+import {
+  buildTerminalDropInput,
+  extractTerminalDropPaths,
+  isTerminalFileDrop,
+} from './terminal-drop'
 import { preloadTerminalFonts } from './terminal-fonts'
+import { buildTerminalOptions } from './terminal-theme'
 import { useSettingsStore } from '../stores/settings-store'
 
 interface TerminalViewProps {
@@ -35,6 +41,20 @@ export function TerminalView({ characterId, engine }: TerminalViewProps): ReactE
   const terminalFontSize = useSettingsStore((s) => s.settings.terminalFontSize)
   const terminalFontFamily = buildTerminalFontFamily(terminalFontFamilies)
 
+  const handleDrop = async (event: DragEvent<HTMLDivElement>): Promise<void> => {
+    event.preventDefault()
+
+    const paths = extractTerminalDropPaths(
+      event.dataTransfer,
+      (file) => window.api.getPathForFile(file as File),
+    )
+    const input = buildTerminalDropInput(paths)
+    if (!input) return
+
+    await electronTerminalTransport.write(characterId, input)
+    terminalRef.current?.focus()
+  }
+
   useEffect(() => {
     setLoading(true)
     loadingRef.current = true
@@ -52,23 +72,16 @@ export function TerminalView({ characterId, engine }: TerminalViewProps): ReactE
       if (disposed) return
 
       const style = getComputedStyle(document.documentElement)
-      const hsl = (variable: string, fallback: string): string => {
-        const value = style.getPropertyValue(variable).trim()
-        return value ? `hsl(${value})` : fallback
-      }
-
-      const terminal = new Terminal({
-        theme: {
-          background: hsl('--background', '#1a1b26'),
-          foreground: hsl('--foreground', '#c8c8c8'),
-          cursor: hsl('--primary', '#7c7cfa'),
-          selectionBackground: hsl('--muted', '#3a3a5a'),
+      const terminal = new Terminal(buildTerminalOptions({
+        variables: {
+          '--background': style.getPropertyValue('--background'),
+          '--foreground': style.getPropertyValue('--foreground'),
+          '--muted': style.getPropertyValue('--muted'),
+          '--muted-foreground': style.getPropertyValue('--muted-foreground'),
         },
         fontFamily: terminalFontFamily,
         fontSize: terminalFontSize,
-        cursorBlink: true,
-        scrollback: 5000,
-      })
+      }))
 
       const fitAddon = new FitAddon()
       terminal.loadAddon(fitAddon)
@@ -304,7 +317,17 @@ export function TerminalView({ characterId, engine }: TerminalViewProps): ReactE
   }, [characterId, terminalFontFamily, terminalFontSize])
 
   return (
-    <div className="h-full w-full min-h-0 overflow-hidden relative bg-background">
+    <div
+      className="h-full w-full min-h-0 overflow-hidden relative bg-background"
+      onDragOver={(event) => {
+        if (!isTerminalFileDrop(event.dataTransfer)) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'copy'
+      }}
+      onDrop={(event) => {
+        void handleDrop(event)
+      }}
+    >
       <div
         ref={containerRef}
         className="absolute inset-0"

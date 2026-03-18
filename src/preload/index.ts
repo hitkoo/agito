@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IPCBridge } from '../shared/bridge'
 
 const bridge: IPCBridge = {
@@ -10,6 +10,9 @@ const bridge: IPCBridge = {
       handler(...args)
     ipcRenderer.on(channel, listener)
     return () => ipcRenderer.removeListener(channel, listener)
+  },
+  getPathForFile: (file: File): string => {
+    return webUtils.getPathForFile(file)
   },
 }
 

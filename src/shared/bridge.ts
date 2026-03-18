@@ -9,4 +9,5 @@
 export interface IPCBridge {
   invoke<T = unknown>(channel: string, ...args: unknown[]): Promise<T>
   on(channel: string, handler: (...args: unknown[]) => void): () => void
+  getPathForFile(file: File): string
 }
