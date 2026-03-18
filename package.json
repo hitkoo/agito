@@ -13,7 +13,12 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "@fontsource/iosevka": "^5.2.5",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/maple-mono": "^5.2.6",
+    "@fontsource/monaspace-neon": "^5.2.5",
     "@supabase/supabase-js": "^2.57.4",
+    "hack-font": "^3.3.0",
     "keytar": "^7.9.0",
     "node-pty": "^1.0.0",
     "sonner": "^2.0.7",

@@ -3,6 +3,19 @@ import type { AgitoSettings } from './types'
 
 export { TERMINAL_FONT_FAMILY_OPTIONS, TERMINAL_FONT_SIZE_OPTIONS }
 
+export type TerminalFontFamilyOption = (typeof TERMINAL_FONT_FAMILY_OPTIONS)[number]
+export type TerminalFontFamilySource = 'bundled' | 'system' | 'fallback'
+
+const TERMINAL_FONT_FAMILY_SOURCE: Record<TerminalFontFamilyOption, TerminalFontFamilySource> = {
+  'SF Mono': 'system',
+  Hack: 'bundled',
+  'JetBrains Mono': 'bundled',
+  Iosevka: 'bundled',
+  'Monaspace Neon': 'bundled',
+  'Maple Mono': 'bundled',
+  monospace: 'fallback',
+}
+
 export function clampTerminalFontSize(size: number): number {
   const min = TERMINAL_FONT_SIZE_OPTIONS[0]
   const max = TERMINAL_FONT_SIZE_OPTIONS[TERMINAL_FONT_SIZE_OPTIONS.length - 1]
@@ -34,6 +47,17 @@ export function normalizeTerminalFontFamilies(families: string[] | null | undefi
 
 export function buildTerminalFontFamily(families: string[]): string {
   return families.join(', ')
+}
+
+export function getTerminalFontFamilySource(
+  family: string
+): TerminalFontFamilySource | null {
+  if (!(family in TERMINAL_FONT_FAMILY_SOURCE)) return null
+  return TERMINAL_FONT_FAMILY_SOURCE[family as TerminalFontFamilyOption]
+}
+
+export function isBundledTerminalFontFamily(family: string): boolean {
+  return getTerminalFontFamilySource(family) === 'bundled'
 }
 
 export function moveTerminalFontFamily(

@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react'
 import { GripVertical } from 'lucide-react'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import { AGITO_DIR_NAME, MIN_GRID_COLS, MAX_GRID_COLS, MIN_GRID_ROWS, MAX_GRID_ROWS } from '../../../shared/constants'
-import { moveTerminalFontFamily, TERMINAL_FONT_SIZE_OPTIONS } from '../../../shared/settings'
+import {
+  getTerminalFontFamilySource,
+  moveTerminalFontFamily,
+  TERMINAL_FONT_SIZE_OPTIONS,
+} from '../../../shared/settings'
 import { Label } from './ui/label'
 import { useUIStore, type ThemeMode } from '../stores/ui-store'
 import { useRoomStore } from '../stores/room-store'
@@ -24,6 +28,12 @@ interface EngineStatus {
 const ENGINE_DISPLAY: Record<string, string> = {
   'claude-code': 'Claude Code',
   codex: 'Codex',
+}
+
+const FONT_SOURCE_LABEL: Record<NonNullable<ReturnType<typeof getTerminalFontFamilySource>>, string> = {
+  bundled: 'Bundled',
+  system: 'System',
+  fallback: 'Fallback',
 }
 
 export function SettingsPanel(): JSX.Element {
@@ -194,6 +204,9 @@ export function SettingsPanel(): JSX.Element {
                 >
                   <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="truncate">{family}</span>
+                  <span className="ml-auto rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    {FONT_SOURCE_LABEL[getTerminalFontFamilySource(family) ?? 'fallback']}
+                  </span>
                 </div>
               ))}
             </div>

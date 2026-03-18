@@ -35,7 +35,7 @@ export const SETTINGS_FILE = 'settings.json'
 export const TERMINAL_FONT_FAMILY_OPTIONS = [
   'SF Mono',
   'JetBrains Mono',
-  'Commit Mono',
+  'Hack',
   'Iosevka',
   'Monaspace Neon',
   'Maple Mono',

@@ -3,6 +3,8 @@ import {
   resolveAgitoSettings,
   buildTerminalFontFamily,
   clampTerminalFontSize,
+  getTerminalFontFamilySource,
+  isBundledTerminalFontFamily,
   moveTerminalFontFamily,
   TERMINAL_FONT_FAMILY_OPTIONS,
   TERMINAL_FONT_SIZE_OPTIONS,
@@ -25,13 +27,13 @@ describe('resolveAgitoSettings', () => {
     expect(
       resolveAgitoSettings({
         defaultSpriteSize: 64,
-        terminalFontFamilies: ['JetBrains Mono', 'JetBrains Mono', 'unknown', 'SF Mono'],
+        terminalFontFamilies: ['JetBrains Mono', 'Commit Mono', 'JetBrains Mono', 'unknown', 'SF Mono'],
         terminalFontSize: 12,
       }).terminalFontFamilies,
     ).toEqual([
       'JetBrains Mono',
       'SF Mono',
-      'Commit Mono',
+      'Hack',
       'Iosevka',
       'Monaspace Neon',
       'Maple Mono',
@@ -60,10 +62,19 @@ describe('terminal font settings helpers', () => {
   test('moves a font family to a new index while preserving the remaining order', () => {
     expect(
       moveTerminalFontFamily(
-        ['SF Mono', 'JetBrains Mono', 'Commit Mono', 'monospace'],
-        'Commit Mono',
+        ['SF Mono', 'Hack', 'JetBrains Mono', 'monospace'],
+        'Hack',
         1,
       ),
-    ).toEqual(['SF Mono', 'Commit Mono', 'JetBrains Mono', 'monospace'])
+    ).toEqual(['SF Mono', 'Hack', 'JetBrains Mono', 'monospace'])
+  })
+
+  test('classifies bundled, system, and fallback terminal fonts', () => {
+    expect(getTerminalFontFamilySource('SF Mono')).toBe('system')
+    expect(getTerminalFontFamilySource('Hack')).toBe('bundled')
+    expect(getTerminalFontFamilySource('monospace')).toBe('fallback')
+    expect(getTerminalFontFamilySource('unknown')).toBeNull()
+    expect(isBundledTerminalFontFamily('Hack')).toBe(true)
+    expect(isBundledTerminalFontFamily('SF Mono')).toBe(false)
   })
 })
