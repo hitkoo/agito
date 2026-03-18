@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { CharacterRuntimeService } from '../src/main/character-runtime-service'
@@ -174,6 +174,65 @@ describe('CharacterRuntimeService', () => {
     })
 
     service.stopSession('char-done')
+  })
+
+  test('does not resurrect a suppressed Claude done state on later transcript sync during session refresh', async () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-claude-refresh-done'
+    const transcriptPath = join(transcriptDir, `${sessionId}.jsonl`)
+    writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: 'Finished the task.' }],
+          },
+        }),
+      ].join('\n') + '\n'
+    )
+
+    const service = new CharacterRuntimeService({ homeDirectory: fakeHome })
+    service.startSession({
+      characterId: 'char-refresh-done',
+      engine: 'claude-code',
+      sessionId,
+      workingDirectory: '/tmp/project',
+    })
+
+    expect(service.getState('char-refresh-done')).toMatchObject({
+      markerStatus: 'idle',
+      unreadDone: false,
+      lastAssistantPreview: 'Finished the task.',
+    })
+
+    appendFileSync(
+      transcriptPath,
+      JSON.stringify({
+        type: 'progress',
+        toolUseID: 'toolu_refresh_marker',
+        parentToolUseID: 'toolu_refresh_marker',
+        data: {
+          type: 'hook_progress',
+          hookEvent: 'SessionStart',
+        },
+      }) + '\n'
+    )
+
+    await Bun.sleep(650)
+
+    expect(service.getState('char-refresh-done')).toMatchObject({
+      markerStatus: 'idle',
+      unreadDone: false,
+      lastAssistantPreview: 'Finished the task.',
+    })
+
+    service.stopSession('char-refresh-done')
   })
 
   test('ignores Claude stop hook progress during initial transcript replay on startup', () => {

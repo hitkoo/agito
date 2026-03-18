@@ -46,6 +46,7 @@ interface RuntimeEntry {
       : never
     : never
   approvalEvidence: CharacterRuntimeState['needsInputEvidence']
+  consumedDoneTurnEndedAt: number | null
   fileOffset: number
   lineBuffer: string
 }
@@ -82,6 +83,7 @@ function createEntry(characterId: string, engine: EngineType | null, sessionId: 
     approvalTimer: null,
     approvalCandidate: null,
     approvalEvidence: null,
+    consumedDoneTurnEndedAt: null,
     fileOffset: 0,
     lineBuffer: '',
   }
@@ -204,6 +206,7 @@ export class CharacterRuntimeService {
         isAttentionActive: attentionActive,
       })
     ) {
+      entry.consumedDoneTurnEndedAt = entry.state.lastTurnEndedAt
       entry.state.unreadDone = false
       entry.state.lastTurnEndedAt = null
     }
@@ -287,6 +290,7 @@ export class CharacterRuntimeService {
       engine,
       sessionId,
     })
+    entry.consumedDoneTurnEndedAt = null
     entry.fileOffset = 0
     entry.lineBuffer = ''
   }
@@ -322,11 +326,22 @@ export class CharacterRuntimeService {
         ? entry.approvalEvidence
         : null
     const effectiveNeedsInput = parserState.needsInput || Boolean(heuristicNeedInput)
+    const parserDoneTurnEndedAt = parserState.lastTurnEndedAt
+
+    if (options.suppressUnreadDone && !effectiveNeedsInput && parserState.unreadDone) {
+      entry.consumedDoneTurnEndedAt = parserDoneTurnEndedAt
+    }
+
+    const hasConsumedCurrentDone =
+      parserState.unreadDone &&
+      parserDoneTurnEndedAt !== null &&
+      entry.consumedDoneTurnEndedAt !== null &&
+      parserDoneTurnEndedAt === entry.consumedDoneTurnEndedAt
 
     entry.state.isRunning = parserState.isRunning
     entry.state.activeToolName = parserState.activeToolName
     entry.state.lastAssistantPreview = parserState.lastAssistantPreview
-    entry.state.lastTurnEndedAt = parserState.lastTurnEndedAt
+    entry.state.lastTurnEndedAt = parserDoneTurnEndedAt
     entry.state.lastError = parserState.lastError
     entry.state.needsInput = effectiveNeedsInput
     entry.state.needsInputReason = parserState.needsInput
@@ -339,7 +354,7 @@ export class CharacterRuntimeService {
       : heuristicNeedInput
     entry.state.acknowledgedNeedInputAt = effectiveNeedsInput ? acknowledgedNeedInputAt : null
     entry.state.unreadDone =
-      !options.suppressUnreadDone &&
+      !hasConsumedCurrentDone &&
       !effectiveNeedsInput &&
       parserState.unreadDone
 
@@ -426,6 +441,7 @@ export class CharacterRuntimeService {
       entry.doneTimer = setTimeout(() => {
         entry.doneTimer = null
         if ((!entry.state.unreadDone && !entry.state.lastError) || !entry.state.attentionActive) return
+        entry.consumedDoneTurnEndedAt = entry.state.lastTurnEndedAt
         entry.state.unreadDone = false
         entry.state.lastError = null
         entry.state.lastTurnEndedAt = null
