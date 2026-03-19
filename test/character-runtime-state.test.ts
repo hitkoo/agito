@@ -19,6 +19,18 @@ describe('deriveCharacterMarkerStatus', () => {
     ).toBe('no_session')
   })
 
+  test('returns idle when a live runtime exists without a saved session id', () => {
+    expect(
+      deriveCharacterMarkerStatus(
+        buildInitialRuntimeState({
+          characterId: 'char-1',
+          engine: 'codex',
+          hasLiveRuntime: true,
+        })
+      )
+    ).toBe('idle')
+  })
+
   test('prioritizes explicit input over running and done', () => {
     expect(
       deriveCharacterMarkerStatus({
@@ -53,6 +65,20 @@ describe('deriveCharacterMarkerStatus', () => {
         unreadDone: true,
       })
     ).toBe('running')
+  })
+
+  test('shows unknown before done and idle once running has gone stale', () => {
+    expect(
+      deriveCharacterMarkerStatus({
+        ...buildInitialRuntimeState({
+          characterId: 'char-1',
+          engine: 'codex',
+          sessionId: 'session-1',
+        }),
+        unreadDone: true,
+        isUnknown: true,
+      })
+    ).toBe('unknown')
   })
 
   test('keeps unread completion as done until attended', () => {

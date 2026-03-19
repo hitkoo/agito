@@ -10,6 +10,7 @@ import {
   getResizedTerminalDockFooterHeight,
   getCharacterStatusBadgeState,
   getCharacterDockPresence,
+  getCharacterSessionMenuActions,
   getClosedCharacters,
   getMinimizedCharacters,
   getOpenCharactersInGlobalOrder,
@@ -125,9 +126,27 @@ describe('getLayoutForGlobalCharacterSessionAction', () => {
   })
 })
 
+describe('getCharacterSessionMenuActions', () => {
+  test('returns assign when no session is attached', () => {
+    expect(getCharacterSessionMenuActions(null)).toEqual(['assign'])
+  })
+
+  test('returns unassign for a live runtime without a saved session', () => {
+    expect(getCharacterSessionMenuActions(null, true)).toEqual(['unassign'])
+  })
+
+  test('returns reassign and unassign when a session exists', () => {
+    expect(getCharacterSessionMenuActions('session-1')).toEqual([
+      'reassign',
+      'unassign',
+    ])
+  })
+})
+
 describe('getCharacterStatusIndicator', () => {
   test('returns spinner only for running status', () => {
     expect(getCharacterStatusIndicator('running')).toBe('spinner')
+    expect(getCharacterStatusIndicator('unknown')).toBe('dot')
     expect(getCharacterStatusIndicator('idle')).toBe('dot')
     expect(getCharacterStatusIndicator('need_input')).toBe('dot')
     expect(getCharacterStatusIndicator('done')).toBe('dot')
@@ -152,6 +171,15 @@ describe('getCharacterStatusBadgeState', () => {
       color: '#51cf66',
       pulse: true,
       ring: true,
+    })
+  })
+
+  test('renders unknown as an amber dot without pulse', () => {
+    expect(getCharacterStatusBadgeState('unknown')).toEqual({
+      indicator: 'dot',
+      color: '#ffd43b',
+      pulse: false,
+      ring: false,
     })
   })
 })

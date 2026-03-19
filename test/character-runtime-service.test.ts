@@ -6,6 +6,63 @@ import { CharacterRuntimeService } from '../src/main/character-runtime-service'
 import type { Character, SessionMapping } from '../src/shared/types'
 
 describe('CharacterRuntimeService', () => {
+  test('starts a live runtime without a saved session id', () => {
+    const service = new CharacterRuntimeService()
+
+    service.startSession({
+      characterId: 'char-live',
+      engine: 'codex',
+      sessionId: null,
+      workingDirectory: '/tmp/project',
+    })
+
+    expect(service.getState('char-live')).toMatchObject({
+      sessionId: null,
+      hasLiveRuntime: true,
+      markerStatus: 'idle',
+    })
+
+    service.stopSession('char-live')
+  })
+
+  test('keeps a live runtime attached when synced characters still have no saved session id', () => {
+    const service = new CharacterRuntimeService()
+    service.startSession({
+      characterId: 'char-live-sync',
+      engine: 'claude-code',
+      sessionId: null,
+      workingDirectory: '/tmp/project',
+    })
+
+    const characters: Character[] = [
+      {
+        id: 'char-live-sync',
+        name: 'live-sync',
+        soul: '',
+        skin: '',
+        engine: 'claude-code',
+        gridPosition: null,
+        currentSessionId: null,
+        sessionHistory: [],
+        stats: {
+          createdAt: '2026-03-19T00:00:00.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+
+    service.syncCharacters(characters, [])
+
+    expect(service.getState('char-live-sync')).toMatchObject({
+      sessionId: null,
+      hasLiveRuntime: true,
+      markerStatus: 'idle',
+    })
+
+    service.stopSession('char-live-sync')
+  })
+
   test('loads Codex status from nested transcript files instead of falling back to a synthetic running state', () => {
     const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
     const transcriptDir = join(fakeHome, '.codex', 'sessions', '2026', '03', '17')
@@ -528,6 +585,149 @@ describe('CharacterRuntimeService', () => {
     service.stopSession('char-null-stop-startup')
   })
 
+  test('hydrates synthetic Claude resume stop_sequence messages as idle instead of running', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-claude-synthetic-resume'
+    writeFileSync(
+      join(transcriptDir, `${sessionId}.jsonl`),
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          model: '<synthetic>',
+          stop_reason: 'stop_sequence',
+          content: [{ type: 'text', text: 'No response requested.' }],
+        },
+      }) + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-synthetic-resume',
+        name: 'synthetic-resume',
+        soul: '',
+        skin: '',
+        engine: 'claude-code',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2026-03-20T00:00:00.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-synthetic-resume',
+        sessionId,
+        engineType: 'claude-code',
+        workingDirectory: '/tmp/project',
+        createdAt: '2026-03-20T00:00:00.000Z',
+        lastActiveAt: '2026-03-20T00:00:01.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({ homeDirectory: fakeHome })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-synthetic-resume')).toMatchObject({
+      markerStatus: 'idle',
+      isRunning: false,
+      unreadDone: false,
+      lastAssistantPreview: null,
+    })
+
+    service.stopSession('char-synthetic-resume')
+  })
+
+  test('hydrates Claude killed task notifications followed by synthetic no-op replies as idle', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-claude-task-notification-killed'
+    writeFileSync(
+      join(transcriptDir, `${sessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: 'Debug logging is active now.' }],
+          },
+        }),
+        JSON.stringify({
+          type: 'system',
+          subtype: 'stop_hook_summary',
+          preventedContinuation: false,
+        }),
+        JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content:
+              '<task-notification>\n<status>killed</status>\n<summary>Background command was stopped</summary>\n</task-notification>\nRead the output file to retrieve the result.',
+          },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            model: '<synthetic>',
+            stop_reason: 'stop_sequence',
+            content: [{ type: 'text', text: 'No response requested.' }],
+          },
+        }),
+      ].join('\n') + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-task-notification-killed',
+        name: 'task-notification-killed',
+        soul: '',
+        skin: '',
+        engine: 'claude-code',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2026-03-20T00:00:00.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-task-notification-killed',
+        sessionId,
+        engineType: 'claude-code',
+        workingDirectory: '/tmp/project',
+        createdAt: '2026-03-20T00:00:00.000Z',
+        lastActiveAt: '2026-03-20T00:00:01.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({ homeDirectory: fakeHome })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-task-notification-killed')).toMatchObject({
+      markerStatus: 'idle',
+      isRunning: false,
+      unreadDone: false,
+      lastAssistantPreview: 'Debug logging is active now.',
+    })
+
+    service.stopSession('char-task-notification-killed')
+  })
+
   test('clears transient transcript errors when attention is acquired', () => {
     const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
     const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
@@ -849,6 +1049,137 @@ describe('CharacterRuntimeService', () => {
     })
 
     service.stopSession('char-approval-startup')
+  })
+
+  test('downgrades live running sessions to unknown after 60s of silence', async () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.codex', 'sessions', '2026', '03', '20')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-codex-stale-running'
+    writeFileSync(
+      join(transcriptDir, `rollout-${sessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: 'event_msg',
+          payload: {
+            type: 'task_started',
+          },
+        }),
+      ].join('\n') + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-stale-running',
+        name: 'stale-running',
+        soul: '',
+        skin: '',
+        engine: 'codex',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2026-03-20T00:00:00.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-stale-running',
+        sessionId,
+        engineType: 'codex',
+        workingDirectory: '/tmp/project',
+        createdAt: '2026-03-20T00:00:00.000Z',
+        lastActiveAt: '2026-03-20T00:00:01.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({
+      homeDirectory: fakeHome,
+      staleRunningThresholdMs: 10,
+    })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-stale-running')).toMatchObject({
+      markerStatus: 'running',
+      isRunning: true,
+      isUnknown: false,
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 25))
+
+    expect(service.getState('char-stale-running')).toMatchObject({
+      markerStatus: 'unknown',
+      isRunning: false,
+      isUnknown: true,
+    })
+
+    service.stopSession('char-stale-running')
+  })
+
+  test('hydrates stale running sessions as unknown immediately on startup', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.codex', 'sessions', '2000', '01', '01')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-codex-stale-startup'
+    writeFileSync(
+      join(transcriptDir, `rollout-${sessionId}.jsonl`),
+      [
+        JSON.stringify({
+          timestamp: '2000-01-01T00:00:00.000Z',
+          type: 'event_msg',
+          payload: {
+            type: 'task_started',
+          },
+        }),
+      ].join('\n') + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-stale-startup',
+        name: 'stale-startup',
+        soul: '',
+        skin: '',
+        engine: 'codex',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2000-01-01T00:00:00.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-stale-startup',
+        sessionId,
+        engineType: 'codex',
+        workingDirectory: '/tmp/project',
+        createdAt: '2000-01-01T00:00:00.000Z',
+        lastActiveAt: '2000-01-01T00:00:01.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({
+      homeDirectory: fakeHome,
+      staleRunningThresholdMs: 10,
+    })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-stale-startup')).toMatchObject({
+      markerStatus: 'unknown',
+      isRunning: false,
+      isUnknown: true,
+    })
+
+    service.stopSession('char-stale-startup')
   })
 
   test('hydrates Claude user interrupts as error instead of a new running turn', () => {

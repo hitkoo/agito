@@ -28,6 +28,7 @@ export const CHARACTER_STATUS_COLORS: Record<string, string> = {
   no_session: '#6c757d',
   idle: '#7c8591',
   running: '#959eab',
+  unknown: '#ffd43b',
   need_input: '#51cf66',
   done: '#4dabf7',
   error: '#ff6b6b',
@@ -82,6 +83,18 @@ export function getLayoutForGlobalCharacterSessionAction(
   }
 
   return ensureCharacterSurface(layout, characterId)
+}
+
+export function getCharacterSessionMenuActions(
+  currentSessionId: string | null,
+  hasLiveRuntime = false
+): GlobalCharacterSessionAction[] {
+  if (hasLiveRuntime && currentSessionId === null) {
+    return ['unassign']
+  }
+  return currentSessionId === null
+    ? ['assign']
+    : ['reassign', 'unassign']
 }
 
 export function getCharacterStatusIndicator(status: string): CharacterStatusIndicator {

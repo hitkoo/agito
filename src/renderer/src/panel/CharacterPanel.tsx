@@ -20,6 +20,7 @@ const STATUS_EMOJI: Record<string, string> = {
   idle: '\u{1F4A4}',
   need_input: '\u{1F4AD}',
   running: '\u{26A1}',
+  unknown: '\u{1F7E1}',
   error: '\u{2757}',
   done: '\u{2705}',
 }
@@ -74,7 +75,8 @@ export function CharacterPanel({ characterId }: CharacterPanelProps): ReactEleme
 
   if (!character) return null
 
-  const hasActiveSession = character.currentSessionId !== null
+  const hasActiveSession =
+    runtimeState?.hasLiveRuntime === true || character.currentSessionId !== null
   const historyEntries = character.sessionHistory ?? []
   const status = getCharacterMarkerStatus(runtimeState, character.currentSessionId)
 

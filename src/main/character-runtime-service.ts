@@ -18,6 +18,7 @@ import {
 
 const DONE_AUTO_CLEAR_MS = 2000
 const TRANSCRIPT_POLL_MS = 500
+const STALE_RUNNING_THRESHOLD_MS = 60000
 
 interface SemanticParser {
   ingestLine(line: string): void
@@ -46,6 +47,7 @@ interface RuntimeEntry {
   doneTimer: ReturnType<typeof setTimeout> | null
   approvalTimer: ReturnType<typeof setTimeout> | null
   completionTimer: ReturnType<typeof setTimeout> | null
+  staleRunningTimer: ReturnType<typeof setTimeout> | null
   approvalCandidate: SemanticParser['getMeta'] extends () => infer T
     ? T extends { pendingNeedInputCandidate: infer C }
       ? C
@@ -58,6 +60,8 @@ interface RuntimeEntry {
       : never
     : never
   completionTurnEndedAt: number | null
+  staleRunningCandidateAt: number | null
+  staleRunningDetectedAt: number | null
   consumedDoneTurnEndedAt: number | null
   fileOffset: number
   lineBuffer: string
@@ -66,7 +70,7 @@ interface RuntimeEntry {
 interface StartRuntimeSessionOptions {
   characterId: string
   engine: EngineType | null
-  sessionId: string
+  sessionId: string | null
   workingDirectory: string
 }
 
@@ -81,12 +85,18 @@ function createParser(engine: EngineType | null): SemanticParser | null {
     : createCodexSemanticParser()
 }
 
-function createEntry(characterId: string, engine: EngineType | null, sessionId: string | null): RuntimeEntry {
+function createEntry(
+  characterId: string,
+  engine: EngineType | null,
+  sessionId: string | null,
+  hasLiveRuntime = false
+): RuntimeEntry {
   return {
     state: buildInitialRuntimeState({
       characterId,
       engine,
       sessionId,
+      hasLiveRuntime,
     }),
     parser: sessionId ? createParser(engine) : null,
     transcriptPath: null,
@@ -94,10 +104,13 @@ function createEntry(characterId: string, engine: EngineType | null, sessionId: 
     doneTimer: null,
     approvalTimer: null,
     completionTimer: null,
+    staleRunningTimer: null,
     approvalCandidate: null,
     approvalEvidence: null,
     completionCandidate: null,
     completionTurnEndedAt: null,
+    staleRunningCandidateAt: null,
+    staleRunningDetectedAt: null,
     consumedDoneTurnEndedAt: null,
     fileOffset: 0,
     lineBuffer: '',
@@ -110,15 +123,18 @@ export class CharacterRuntimeService {
   private readonly homeDirectory: string
   private readonly approvalHeuristicDelayMs: number
   private readonly completionHeuristicDelayMs: number
+  private readonly staleRunningThresholdMs: number
 
   constructor(options?: {
     homeDirectory?: string
     approvalHeuristicDelayMs?: number
     completionHeuristicDelayMs?: number
+    staleRunningThresholdMs?: number
   }) {
     this.homeDirectory = options?.homeDirectory ?? homedir()
     this.approvalHeuristicDelayMs = options?.approvalHeuristicDelayMs ?? 7000
     this.completionHeuristicDelayMs = options?.completionHeuristicDelayMs ?? 10000
+    this.staleRunningThresholdMs = options?.staleRunningThresholdMs ?? STALE_RUNNING_THRESHOLD_MS
   }
 
   onUpdate(listener: RuntimeUpdateListener): () => void {
@@ -143,7 +159,11 @@ export class CharacterRuntimeService {
         )
       } else {
         existing.state.engine = character.engine
-        if (character.currentSessionId === null && existing.state.sessionId !== null) {
+        if (
+          character.currentSessionId === null &&
+          existing.state.sessionId !== null &&
+          !existing.state.hasLiveRuntime
+        ) {
           this.stopSession(character.id)
         } else if (character.currentSessionId !== existing.state.sessionId) {
           this.rebindSession(existing, character.currentSessionId, character.engine)
@@ -183,16 +203,17 @@ export class CharacterRuntimeService {
   startSession(options: StartRuntimeSessionOptions): void {
     const entry = this.getOrCreateEntry(options.characterId, options.engine)
     this.resetEntry(entry, options.sessionId, options.engine)
-
-    const transcriptPath = this.resolveTranscriptPath(
-      options.engine,
-      options.sessionId,
-      options.workingDirectory
-    )
-    if (transcriptPath) {
-      this.attachTranscript(entry, transcriptPath)
-    } else {
-      this.startTranscriptPolling(entry, options.engine, options.sessionId, options.workingDirectory)
+    if (options.sessionId) {
+      const transcriptPath = this.resolveTranscriptPath(
+        options.engine,
+        options.sessionId,
+        options.workingDirectory
+      )
+      if (transcriptPath) {
+        this.attachTranscript(entry, transcriptPath)
+      } else {
+        this.startTranscriptPolling(entry, options.engine, options.sessionId, options.workingDirectory)
+      }
     }
 
     this.emit(entry.state)
@@ -210,6 +231,29 @@ export class CharacterRuntimeService {
       engine: entry.state.engine,
     })
     this.emit(entry.state)
+  }
+
+  setLiveRuntime(characterId: string, hasLiveRuntime: boolean): void {
+    const entry = this.entries.get(characterId)
+    if (!entry) return
+
+    entry.state.hasLiveRuntime = hasLiveRuntime
+    if (!hasLiveRuntime) {
+      entry.state.isRunning = false
+      entry.state.isUnknown = false
+      entry.state.activeToolName = null
+      if (entry.state.sessionId === null) {
+        entry.state.needsInput = false
+        entry.state.needsInputReason = null
+        entry.state.needsInputEvidence = null
+        entry.state.acknowledgedNeedInputAt = null
+        entry.state.unreadDone = false
+        entry.state.lastTurnEndedAt = null
+        entry.state.lastAssistantPreview = null
+        entry.state.lastError = null
+      }
+    }
+    this.updateState(entry)
   }
 
   setAttention(characterId: string, attentionActive: boolean): void {
@@ -260,7 +304,7 @@ export class CharacterRuntimeService {
     return entry
   }
 
-  private resetEntry(entry: RuntimeEntry, sessionId: string, engine: EngineType | null): void {
+  private resetEntry(entry: RuntimeEntry, sessionId: string | null, engine: EngineType | null): void {
     this.clearTimers(entry)
     this.detachTranscript(entry)
     entry.parser = createParser(engine)
@@ -268,11 +312,14 @@ export class CharacterRuntimeService {
       characterId: entry.state.characterId,
       engine,
       sessionId,
+      hasLiveRuntime: true,
     })
     entry.approvalCandidate = null
     entry.approvalEvidence = null
     entry.completionCandidate = null
     entry.completionTurnEndedAt = null
+    entry.staleRunningCandidateAt = null
+    entry.staleRunningDetectedAt = null
     entry.fileOffset = 0
     entry.lineBuffer = ''
   }
@@ -312,10 +359,13 @@ export class CharacterRuntimeService {
       characterId: entry.state.characterId,
       engine,
       sessionId,
+      hasLiveRuntime: entry.state.hasLiveRuntime,
     })
     entry.consumedDoneTurnEndedAt = null
     entry.completionCandidate = null
     entry.completionTurnEndedAt = null
+    entry.staleRunningCandidateAt = null
+    entry.staleRunningDetectedAt = null
     entry.fileOffset = 0
     entry.lineBuffer = ''
   }
@@ -362,6 +412,18 @@ export class CharacterRuntimeService {
         : null
     const effectiveDoneTurnEndedAt = parserDoneTurnEndedAt ?? heuristicDoneTurnEndedAt
     const effectiveUnreadDone = parserState.unreadDone || heuristicDoneTurnEndedAt !== null
+    this.syncStaleRunningHeuristic(entry, {
+      isRunning: parserState.isRunning,
+      lastRunningActivityAt: parserState.lastRunningActivityAt,
+      hasBlockingState: Boolean(parserState.lastError) || effectiveNeedsInput || effectiveUnreadDone,
+    })
+    const isUnknown =
+      parserState.isRunning &&
+      !parserState.lastError &&
+      !effectiveNeedsInput &&
+      !effectiveUnreadDone &&
+      entry.staleRunningDetectedAt !== null &&
+      parserState.lastRunningActivityAt === entry.staleRunningDetectedAt
 
     if (options.suppressUnreadDone && !effectiveNeedsInput && effectiveUnreadDone) {
       entry.consumedDoneTurnEndedAt = effectiveDoneTurnEndedAt
@@ -373,10 +435,12 @@ export class CharacterRuntimeService {
       entry.consumedDoneTurnEndedAt !== null &&
       effectiveDoneTurnEndedAt === entry.consumedDoneTurnEndedAt
 
-    entry.state.isRunning = parserState.isRunning
-    entry.state.activeToolName = parserState.activeToolName
+    entry.state.isRunning = isUnknown ? false : parserState.isRunning
+    entry.state.isUnknown = isUnknown
+    entry.state.activeToolName = isUnknown ? null : parserState.activeToolName
     entry.state.lastAssistantPreview = parserState.lastAssistantPreview
     entry.state.lastTurnEndedAt = effectiveDoneTurnEndedAt
+    entry.state.lastRunningActivityAt = parserState.lastRunningActivityAt
     entry.state.lastError = parserState.lastError
     entry.state.needsInput = effectiveNeedsInput
     entry.state.needsInputReason = parserState.needsInput
@@ -395,12 +459,14 @@ export class CharacterRuntimeService {
 
     if (heuristicNeedInput) {
       entry.state.isRunning = false
+      entry.state.isUnknown = false
       entry.state.activeToolName = null
       entry.state.unreadDone = false
     }
 
     if (heuristicDoneTurnEndedAt !== null) {
       entry.state.isRunning = false
+      entry.state.isUnknown = false
       entry.state.activeToolName = null
     }
 
@@ -515,6 +581,52 @@ export class CharacterRuntimeService {
     }, remainingMs)
   }
 
+  private syncStaleRunningHeuristic(
+    entry: RuntimeEntry,
+    input: {
+      isRunning: boolean
+      lastRunningActivityAt: number | null
+      hasBlockingState: boolean
+    }
+  ): void {
+    if (!input.isRunning || input.lastRunningActivityAt === null || input.hasBlockingState) {
+      this.clearStaleRunningHeuristic(entry)
+      return
+    }
+
+    const anchorAt = input.lastRunningActivityAt
+    const isSameCandidate = entry.staleRunningCandidateAt === anchorAt
+    entry.staleRunningCandidateAt = anchorAt
+
+    if (entry.staleRunningDetectedAt === anchorAt) {
+      return
+    }
+
+    if (!isSameCandidate) {
+      this.clearStaleRunningTimer(entry)
+      entry.staleRunningDetectedAt = null
+    }
+
+    const elapsedMs = Math.max(0, Date.now() - anchorAt)
+    const remainingMs = this.staleRunningThresholdMs - elapsedMs
+
+    if (remainingMs <= 0) {
+      entry.staleRunningDetectedAt = anchorAt
+      return
+    }
+
+    if (isSameCandidate && entry.staleRunningTimer) {
+      return
+    }
+
+    entry.staleRunningTimer = setTimeout(() => {
+      entry.staleRunningTimer = null
+      if (entry.staleRunningCandidateAt !== anchorAt) return
+      entry.staleRunningDetectedAt = anchorAt
+      this.syncFromParser(entry)
+    }, remainingMs)
+  }
+
   private syncDoneAutoClear(entry: RuntimeEntry): void {
     const hasTransientState = entry.state.unreadDone || Boolean(entry.state.lastError)
     if (
@@ -549,6 +661,7 @@ export class CharacterRuntimeService {
     }
     this.clearApprovalHeuristic(entry)
     this.clearCompletionHeuristic(entry)
+    this.clearStaleRunningHeuristic(entry)
     if (entry.transcriptPollTimer) {
       clearInterval(entry.transcriptPollTimer)
       entry.transcriptPollTimer = null
@@ -579,6 +692,19 @@ export class CharacterRuntimeService {
     this.clearCompletionTimer(entry)
     entry.completionCandidate = null
     entry.completionTurnEndedAt = null
+  }
+
+  private clearStaleRunningTimer(entry: RuntimeEntry): void {
+    if (entry.staleRunningTimer) {
+      clearTimeout(entry.staleRunningTimer)
+      entry.staleRunningTimer = null
+    }
+  }
+
+  private clearStaleRunningHeuristic(entry: RuntimeEntry): void {
+    this.clearStaleRunningTimer(entry)
+    entry.staleRunningCandidateAt = null
+    entry.staleRunningDetectedAt = null
   }
 
   private attachTranscript(entry: RuntimeEntry, transcriptPath: string): void {

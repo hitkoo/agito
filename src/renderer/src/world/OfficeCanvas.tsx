@@ -62,6 +62,7 @@ const STATUS_COLORS: Record<CharacterMarkerStatus, number> = {
   no_session: 0x6c757d,
   idle: 0x7c8591,
   running: 0x7c8591,
+  unknown: 0xffd43b,
   need_input: 0x51cf66,
   done: 0x4dabf7,
   error: 0xff6b6b,
@@ -385,6 +386,7 @@ function WaitingEffect({ w, h, color }: { w: number; h: number; color: number })
 
 const STATUS_BADGE_EMOJI: Record<string, string> = {
   running: '\u{26A1}',
+  unknown: '\u{2022}',
   need_input: '\u{1F4AC}',
   done: '\u{2705}',
   error: '\u{2757}',
@@ -1298,6 +1300,8 @@ function CharacterSprite({
         return <IdleEffect w={w} h={h} color={color} />
       case 'running':
         return <WorkingEffect w={w} h={h} color={color} />
+      case 'unknown':
+        return <IdleEffect w={w} h={h} color={color} />
       case 'error':
         return <ErrorEffect w={w} h={h} color={color} />
       case 'done':

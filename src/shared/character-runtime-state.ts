@@ -4,6 +4,7 @@ export type CharacterMarkerStatus =
   | 'no_session'
   | 'idle'
   | 'running'
+  | 'unknown'
   | 'need_input'
   | 'done'
   | 'error'
@@ -22,13 +23,16 @@ export interface CharacterRuntimeState {
   characterId: string
   engine: EngineType | null
   sessionId: string | null
+  hasLiveRuntime: boolean
   markerStatus: CharacterMarkerStatus
   isRunning: boolean
+  isUnknown: boolean
   needsInput: boolean
   unreadDone: boolean
   activeToolName: string | null
   attentionActive: boolean
   lastTurnEndedAt: number | null
+  lastRunningActivityAt: number | null
   lastAssistantPreview: string | null
   lastError: string | null
   needsInputReason: NeedInputReason | null
@@ -40,23 +44,28 @@ interface BuildInitialRuntimeStateOptions {
   characterId: string
   engine: EngineType | null
   sessionId?: string | null
+  hasLiveRuntime?: boolean
 }
 
 export function buildInitialRuntimeState(
   options: BuildInitialRuntimeStateOptions
 ): CharacterRuntimeState {
   const sessionId = options.sessionId ?? null
+  const hasLiveRuntime = options.hasLiveRuntime ?? false
   return {
     characterId: options.characterId,
     engine: options.engine,
     sessionId,
-    markerStatus: sessionId ? 'idle' : 'no_session',
+    hasLiveRuntime,
+    markerStatus: sessionId || hasLiveRuntime ? 'idle' : 'no_session',
     isRunning: false,
+    isUnknown: false,
     needsInput: false,
     unreadDone: false,
     activeToolName: null,
     attentionActive: false,
     lastTurnEndedAt: null,
+    lastRunningActivityAt: null,
     lastAssistantPreview: null,
     lastError: null,
     needsInputReason: null,
@@ -76,9 +85,10 @@ export function hasVisibleNeedInput(
 export function deriveCharacterMarkerStatus(
   state: CharacterRuntimeState
 ): CharacterMarkerStatus {
-  if (state.sessionId === null) return 'no_session'
+  if (state.sessionId === null && !state.hasLiveRuntime) return 'no_session'
   if (state.lastError) return 'error'
   if (hasVisibleNeedInput(state)) return 'need_input'
+  if (state.isUnknown) return 'unknown'
   if (state.isRunning) return 'running'
   if (state.unreadDone) return 'done'
   return 'idle'

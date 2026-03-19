@@ -54,6 +54,7 @@ interface ClaudeRecord {
   toolUseID?: string
   parentToolUseID?: string
   message?: {
+    model?: string
     role?: string
     stop_reason?: string | null
     content?: ClaudeMessageBlock[] | string
@@ -68,6 +69,7 @@ interface CodexMessagePart {
 }
 
 interface CodexRecord {
+  timestamp?: string | number
   type?: string
   payload?: {
     type?: string
@@ -184,6 +186,10 @@ function isClaudeUserInterruptText(text: string): boolean {
   )
 }
 
+function isClaudeTaskNotificationText(text: string): boolean {
+  return text.trim().startsWith('<task-notification>')
+}
+
 function isClaudeToolUseRejectedText(text: string): boolean {
   const normalized = text.trim()
   return normalized.startsWith("The user doesn't want to proceed with this tool use.")
@@ -194,6 +200,15 @@ function hasClaudePlanArtifact(record: ClaudeRecord): boolean {
   const value = record.toolUseResult as Record<string, unknown>
   if (typeof value.plan === 'string' && value.plan.trim()) return true
   return typeof value.filePath === 'string' && value.filePath.includes('/.claude/plans/')
+}
+
+function isClaudeSyntheticResumeNoOp(record: ClaudeRecord, text: string, hasToolUseBlock: boolean): boolean {
+  return (
+    record.message?.model === '<synthetic>' &&
+    record.message?.stop_reason === 'stop_sequence' &&
+    !hasToolUseBlock &&
+    text === 'No response requested.'
+  )
 }
 
 function isClaudeRunningProgressType(dataType: string | undefined): boolean {
@@ -235,8 +250,8 @@ function createBaseParser(engine: EngineType): {
   setPreview: (preview: string | null | undefined) => void
   clearError: () => void
   clearNeedInput: () => void
-  startTurnRunning: () => void
-  startRunning: (toolName?: string | null) => void
+  startTurnRunning: (detectedAt?: number) => void
+  startRunning: (toolName?: string | null, detectedAt?: number) => void
   finishTool: () => void
   completeTurn: () => void
   setError: (message: string) => void
@@ -262,21 +277,25 @@ function createBaseParser(engine: EngineType): {
       state.needsInputEvidence = null
       state.acknowledgedNeedInputAt = null
     },
-    startTurnRunning() {
+    startTurnRunning(detectedAt = Date.now()) {
       state.lastError = null
       state.isRunning = true
+      state.isUnknown = false
       state.unreadDone = false
       state.activeToolName = null
+      state.lastRunningActivityAt = detectedAt
       state.needsInput = false
       state.needsInputReason = null
       state.needsInputEvidence = null
       state.acknowledgedNeedInputAt = null
     },
-    startRunning(toolName) {
+    startRunning(toolName, detectedAt = Date.now()) {
       state.lastError = null
       state.isRunning = true
+      state.isUnknown = false
       state.unreadDone = false
       state.activeToolName = toolName ?? state.activeToolName
+      state.lastRunningActivityAt = detectedAt
       state.needsInput = false
       state.needsInputReason = null
       state.needsInputEvidence = null
@@ -288,12 +307,14 @@ function createBaseParser(engine: EngineType): {
     completeTurn() {
       state.lastError = null
       state.isRunning = false
+      state.isUnknown = false
       state.activeToolName = null
       state.lastTurnEndedAt = Date.now()
       state.unreadDone = !state.needsInput
     },
     setError(message) {
       state.isRunning = false
+      state.isUnknown = false
       state.unreadDone = false
       state.needsInput = false
       state.needsInputReason = null
@@ -305,6 +326,7 @@ function createBaseParser(engine: EngineType): {
     setNeedInput(reason, evidence) {
       state.lastError = null
       state.isRunning = false
+      state.isUnknown = false
       state.unreadDone = false
       state.activeToolName = null
       state.needsInput = true
@@ -400,7 +422,7 @@ export function createClaudeSemanticParser(): SemanticParser {
             (progressToolUseId ? activeTools.get(progressToolUseId) : null) ??
             state.activeToolName ??
             undefined
-          startRunning(progressToolName)
+          startRunning(progressToolName, parseRecordTimestamp(record.timestamp))
           return
         }
         if (isClaudeIgnoredProgressType(progressType)) {
@@ -411,8 +433,6 @@ export function createClaudeSemanticParser(): SemanticParser {
       }
 
       if (record.type === 'assistant') {
-        pendingNeedInputCandidate = null
-        clearPendingCompletionCandidate()
         const blocks = Array.isArray(record.message?.content) ? record.message.content : []
         const text = blocks
           .filter((block) => block.type === 'text' && block.text)
@@ -420,6 +440,13 @@ export function createClaudeSemanticParser(): SemanticParser {
           .join('\n')
           .trim()
         const hasToolUseBlock = blocks.some((block) => block.type === 'tool_use')
+
+        if (isClaudeSyntheticResumeNoOp(record, text, hasToolUseBlock)) {
+          return
+        }
+
+        pendingNeedInputCandidate = null
+        clearPendingCompletionCandidate()
 
         if (pendingPlanHandoffCandidate) {
           if (record.message?.stop_reason === 'end_turn' && !hasToolUseBlock) {
@@ -440,9 +467,9 @@ export function createClaudeSemanticParser(): SemanticParser {
         }
         if (text) {
           setPreview(text)
-          startRunning()
+          startRunning(undefined, parseRecordTimestamp(record.timestamp))
         } else if (hasThinkingBlock && !state.needsInput) {
-          startRunning()
+          startRunning(undefined, parseRecordTimestamp(record.timestamp))
         }
 
         for (const block of blocks) {
@@ -466,7 +493,7 @@ export function createClaudeSemanticParser(): SemanticParser {
             continue
           }
           setPreview(null)
-          startRunning(block.name ?? 'tool')
+          startRunning(block.name ?? 'tool', parseRecordTimestamp(record.timestamp))
         }
 
         if (record.message?.stop_reason === 'end_turn') {
@@ -545,11 +572,15 @@ export function createClaudeSemanticParser(): SemanticParser {
         return
       }
 
+      if (userText && !hasToolResultBlock && isClaudeTaskNotificationText(userText)) {
+        return
+      }
+
       clearError()
       if (userText && !hasToolResultBlock) {
         sawAssistantActivityThisTurn = false
         clearPendingCompletionCandidate()
-        startTurnRunning()
+        startTurnRunning(parseRecordTimestamp(record.timestamp))
         finishTool()
         pendingPlanHandoffCandidate = null
         pendingNeedInputCandidate = null
@@ -655,13 +686,13 @@ export function createCodexSemanticParser(): SemanticParser {
       if (record.type === 'event_msg' && payloadType === 'task_started') {
         planModeActive = isCodexPlanModeRecord(record)
         sawProposedPlan = false
-        startRunning()
+        startRunning(undefined, parseRecordTimestamp(record.timestamp))
         return
       }
 
       if (record.type === 'event_msg' && payloadType === 'agent_message') {
         setPreview(record.payload?.message ?? record.payload?.text ?? null)
-        startRunning()
+        startRunning(undefined, parseRecordTimestamp(record.timestamp))
         return
       }
 
@@ -687,7 +718,7 @@ export function createCodexSemanticParser(): SemanticParser {
         record.payload?.type === 'message' &&
         record.payload.role === 'user'
       ) {
-        startTurnRunning()
+        startTurnRunning(parseRecordTimestamp(record.timestamp))
         return
       }
 
@@ -733,7 +764,7 @@ export function createCodexSemanticParser(): SemanticParser {
           return
         }
 
-        startRunning(record.payload?.name ?? 'tool')
+        startRunning(record.payload?.name ?? 'tool', parseRecordTimestamp(record.timestamp))
         return
       }
 
@@ -745,7 +776,7 @@ export function createCodexSemanticParser(): SemanticParser {
         const callId = record.payload?.call_id
         if (callId) activeCalls.delete(callId)
         if (callId && state.needsInputEvidence?.anchorId === callId) {
-          startTurnRunning()
+          startTurnRunning(parseRecordTimestamp(record.timestamp))
         }
         if (activeCalls.size === 0) {
           finishTool()

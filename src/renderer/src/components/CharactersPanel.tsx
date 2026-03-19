@@ -126,8 +126,9 @@ const STATUS_COLORS: Record<string, string> = {
   no_session: 'bg-gray-500',
   idle: 'bg-gray-400',
   running: 'bg-green-500',
-  need_input: 'bg-yellow-400',
-  done: 'bg-green-500',
+  unknown: 'bg-yellow-400',
+  need_input: 'bg-emerald-500',
+  done: 'bg-blue-500',
   error: 'bg-red-500',
 }
 
