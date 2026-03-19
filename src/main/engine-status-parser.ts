@@ -20,8 +20,15 @@ interface PendingNeedInputCandidate {
   detectedAt: number
 }
 
+interface PendingCompletionCandidate {
+  engine: Extract<EngineType, 'claude-code'>
+  anchorType: string
+  detectedAt: number
+}
+
 interface SemanticParserMeta {
   pendingNeedInputCandidate: PendingNeedInputCandidate | null
+  pendingCompletionCandidate: PendingCompletionCandidate | null
 }
 
 interface ClaudeMessageBlock {
@@ -39,6 +46,7 @@ interface ClaudeRecord {
   type?: string
   subtype?: string
   permissionMode?: string
+  preventedContinuation?: boolean
   data?: {
     type?: string
     hookEvent?: string
@@ -105,6 +113,18 @@ function buildPendingNeedInputCandidate(
     engine,
     anchorType,
     anchorId,
+    detectedAt,
+  }
+}
+
+function buildPendingCompletionCandidate(
+  engine: Extract<EngineType, 'claude-code'>,
+  anchorType: string,
+  detectedAt: number
+): PendingCompletionCandidate {
+  return {
+    engine,
+    anchorType,
     detectedAt,
   }
 }
@@ -312,6 +332,7 @@ export function createClaudeSemanticParser(): SemanticParser {
   let planModeActive = false
   let pendingPlanHandoffCandidate: { sourceToolUseId?: string } | null = null
   let pendingNeedInputCandidate: PendingNeedInputCandidate | null = null
+  let pendingCompletionCandidate: PendingCompletionCandidate | null = null
   let sawAssistantActivityThisTurn = false
 
   const clearPendingNeedInputCandidate = (toolUseId?: string | null): void => {
@@ -319,6 +340,10 @@ export function createClaudeSemanticParser(): SemanticParser {
     if (!toolUseId || !pendingNeedInputCandidate.anchorId || pendingNeedInputCandidate.anchorId === toolUseId) {
       pendingNeedInputCandidate = null
     }
+  }
+
+  const clearPendingCompletionCandidate = (): void => {
+    pendingCompletionCandidate = null
   }
 
   return {
@@ -337,6 +362,7 @@ export function createClaudeSemanticParser(): SemanticParser {
       if (record.error) {
         pendingPlanHandoffCandidate = null
         pendingNeedInputCandidate = null
+        pendingCompletionCandidate = null
         sawAssistantActivityThisTurn = false
         setError(record.error)
         return
@@ -348,6 +374,7 @@ export function createClaudeSemanticParser(): SemanticParser {
 
         if (progressType === 'hook_progress') {
           if (record.data?.hookEvent === 'PreToolUse') {
+            clearPendingCompletionCandidate()
             const progressToolName = progressToolUseId ? activeTools.get(progressToolUseId) : null
             const isApprovalHeuristicExempt =
               progressToolName === 'Task' || progressToolName === 'AskUserQuestion'
@@ -367,6 +394,7 @@ export function createClaudeSemanticParser(): SemanticParser {
         }
 
         if (!state.needsInput && isClaudeRunningProgressType(progressType)) {
+          clearPendingCompletionCandidate()
           clearPendingNeedInputCandidate(progressToolUseId)
           const progressToolName =
             (progressToolUseId ? activeTools.get(progressToolUseId) : null) ??
@@ -384,6 +412,7 @@ export function createClaudeSemanticParser(): SemanticParser {
 
       if (record.type === 'assistant') {
         pendingNeedInputCandidate = null
+        clearPendingCompletionCandidate()
         const blocks = Array.isArray(record.message?.content) ? record.message.content : []
         const text = blocks
           .filter((block) => block.type === 'text' && block.text)
@@ -441,9 +470,41 @@ export function createClaudeSemanticParser(): SemanticParser {
         }
 
         if (record.message?.stop_reason === 'end_turn') {
+          clearPendingCompletionCandidate()
           completeTurn()
           sawAssistantActivityThisTurn = false
+          return
         }
+
+        if (
+          text &&
+          !hasToolUseBlock &&
+          record.message?.stop_reason === null &&
+          !state.needsInput &&
+          !state.lastError
+        ) {
+          pendingCompletionCandidate = buildPendingCompletionCandidate(
+            'claude-code',
+            'null_stop_text',
+            parseRecordTimestamp(record.timestamp)
+          )
+        }
+        return
+      }
+
+      if (record.type === 'system' && record.subtype === 'stop_hook_summary') {
+        if (
+          pendingCompletionCandidate &&
+          record.preventedContinuation === false &&
+          !state.lastError &&
+          !state.needsInput
+        ) {
+          clearPendingCompletionCandidate()
+          completeTurn()
+          sawAssistantActivityThisTurn = false
+          return
+        }
+        clearPendingCompletionCandidate()
         return
       }
 
@@ -453,6 +514,7 @@ export function createClaudeSemanticParser(): SemanticParser {
           !state.lastError &&
           !state.needsInput
         ) {
+          clearPendingCompletionCandidate()
           completeTurn()
           sawAssistantActivityThisTurn = false
         }
@@ -477,6 +539,7 @@ export function createClaudeSemanticParser(): SemanticParser {
         finishTool()
         pendingPlanHandoffCandidate = null
         pendingNeedInputCandidate = null
+        pendingCompletionCandidate = null
         sawAssistantActivityThisTurn = false
         setError('interrupted_by_user')
         return
@@ -485,6 +548,7 @@ export function createClaudeSemanticParser(): SemanticParser {
       clearError()
       if (userText && !hasToolResultBlock) {
         sawAssistantActivityThisTurn = false
+        clearPendingCompletionCandidate()
         startTurnRunning()
         finishTool()
         pendingPlanHandoffCandidate = null
@@ -506,6 +570,7 @@ export function createClaudeSemanticParser(): SemanticParser {
         if (block.is_error && isClaudeToolUseRejectedText(text)) {
           pendingNeedInputCandidate = null
           pendingPlanHandoffCandidate = null
+          pendingCompletionCandidate = null
           sawAssistantActivityThisTurn = false
           setError('interrupted_by_user')
           continue
@@ -546,6 +611,9 @@ export function createClaudeSemanticParser(): SemanticParser {
       return {
         pendingNeedInputCandidate: pendingNeedInputCandidate
           ? { ...pendingNeedInputCandidate }
+          : null,
+        pendingCompletionCandidate: pendingCompletionCandidate
+          ? { ...pendingCompletionCandidate }
           : null,
       }
     },
@@ -690,6 +758,7 @@ export function createCodexSemanticParser(): SemanticParser {
     getMeta(): SemanticParserMeta {
       return {
         pendingNeedInputCandidate: null,
+        pendingCompletionCandidate: null,
       }
     },
   }

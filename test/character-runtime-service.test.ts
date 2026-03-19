@@ -415,6 +415,119 @@ describe('CharacterRuntimeService', () => {
     service.stopSession('char-turn-duration')
   })
 
+  test('completes a live Claude null-stop tail after a silence timeout', async () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-claude-null-stop-live'
+    const transcriptPath = join(transcriptDir, `${sessionId}.jsonl`)
+    writeFileSync(
+      transcriptPath,
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: null,
+          content: [{ type: 'text', text: 'Memory snapshot complete.' }],
+        },
+      }) + '\n'
+    )
+
+    const service = new CharacterRuntimeService({
+      homeDirectory: fakeHome,
+      completionHeuristicDelayMs: 20,
+    })
+    service.startSession({
+      characterId: 'char-null-stop-live',
+      engine: 'claude-code',
+      sessionId,
+      workingDirectory: '/tmp/project',
+    })
+
+    expect(service.getState('char-null-stop-live')).toMatchObject({
+      markerStatus: 'running',
+      isRunning: true,
+      unreadDone: false,
+      lastAssistantPreview: 'Memory snapshot complete.',
+    })
+
+    await Bun.sleep(80)
+
+    expect(service.getState('char-null-stop-live')).toMatchObject({
+      markerStatus: 'done',
+      isRunning: false,
+      unreadDone: true,
+      lastAssistantPreview: 'Memory snapshot complete.',
+    })
+
+    service.stopSession('char-null-stop-live')
+  })
+
+  test('hydrates stale Claude null-stop tails as idle on startup after the silence timeout elapses', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
+    const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
+    mkdirSync(transcriptDir, { recursive: true })
+
+    const sessionId = 'session-claude-null-stop-startup'
+    writeFileSync(
+      join(transcriptDir, `${sessionId}.jsonl`),
+      JSON.stringify({
+        timestamp: '2026-03-18T00:00:00.000Z',
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: null,
+          content: [{ type: 'text', text: 'Memory snapshot complete.' }],
+        },
+      }) + '\n'
+    )
+
+    const characters: Character[] = [
+      {
+        id: 'char-null-stop-startup',
+        name: 'null-stop-startup',
+        soul: '',
+        skin: '',
+        engine: 'claude-code',
+        gridPosition: null,
+        currentSessionId: sessionId,
+        sessionHistory: [sessionId],
+        stats: {
+          createdAt: '2026-03-18T00:00:00.000Z',
+          totalTasks: 0,
+          totalCommits: 0,
+        },
+      },
+    ]
+    const sessions: SessionMapping[] = [
+      {
+        characterId: 'char-null-stop-startup',
+        sessionId,
+        engineType: 'claude-code',
+        workingDirectory: '/tmp/project',
+        createdAt: '2026-03-18T00:00:00.000Z',
+        lastActiveAt: '2026-03-18T00:00:01.000Z',
+      },
+    ]
+
+    const service = new CharacterRuntimeService({
+      homeDirectory: fakeHome,
+      completionHeuristicDelayMs: 20,
+    })
+    service.syncCharacters(characters, sessions)
+
+    expect(service.getState('char-null-stop-startup')).toMatchObject({
+      markerStatus: 'idle',
+      isRunning: false,
+      unreadDone: false,
+      lastAssistantPreview: 'Memory snapshot complete.',
+    })
+
+    service.stopSession('char-null-stop-startup')
+  })
+
   test('clears transient transcript errors when attention is acquired', () => {
     const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
     const transcriptDir = join(fakeHome, '.claude', 'projects', '-tmp-project')
@@ -559,11 +672,12 @@ describe('CharacterRuntimeService', () => {
     mkdirSync(transcriptDir, { recursive: true })
 
     const sessionId = 'session-claude-approval-timeout'
+    const nowIso = new Date().toISOString()
     writeFileSync(
       join(transcriptDir, `${sessionId}.jsonl`),
       [
         JSON.stringify({
-          timestamp: '2026-03-18T02:01:10.522Z',
+          timestamp: nowIso,
           type: 'assistant',
           message: {
             role: 'assistant',
@@ -579,7 +693,7 @@ describe('CharacterRuntimeService', () => {
           },
         }),
         JSON.stringify({
-          timestamp: '2026-03-18T02:01:10.536Z',
+          timestamp: nowIso,
           type: 'progress',
           toolUseID: 'toolu_approval_timeout',
           data: {

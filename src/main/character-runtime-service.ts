@@ -30,6 +30,11 @@ interface SemanticParser {
       anchorId?: string
       detectedAt: number
     } | null
+    pendingCompletionCandidate: {
+      engine: 'claude-code'
+      anchorType: string
+      detectedAt: number
+    } | null
   }
 }
 
@@ -40,12 +45,19 @@ interface RuntimeEntry {
   transcriptPollTimer: ReturnType<typeof setInterval> | null
   doneTimer: ReturnType<typeof setTimeout> | null
   approvalTimer: ReturnType<typeof setTimeout> | null
+  completionTimer: ReturnType<typeof setTimeout> | null
   approvalCandidate: SemanticParser['getMeta'] extends () => infer T
     ? T extends { pendingNeedInputCandidate: infer C }
       ? C
       : never
     : never
   approvalEvidence: CharacterRuntimeState['needsInputEvidence']
+  completionCandidate: SemanticParser['getMeta'] extends () => infer T
+    ? T extends { pendingCompletionCandidate: infer C }
+      ? C
+      : never
+    : never
+  completionTurnEndedAt: number | null
   consumedDoneTurnEndedAt: number | null
   fileOffset: number
   lineBuffer: string
@@ -81,8 +93,11 @@ function createEntry(characterId: string, engine: EngineType | null, sessionId: 
     transcriptPollTimer: null,
     doneTimer: null,
     approvalTimer: null,
+    completionTimer: null,
     approvalCandidate: null,
     approvalEvidence: null,
+    completionCandidate: null,
+    completionTurnEndedAt: null,
     consumedDoneTurnEndedAt: null,
     fileOffset: 0,
     lineBuffer: '',
@@ -94,10 +109,16 @@ export class CharacterRuntimeService {
   private readonly listeners = new Set<RuntimeUpdateListener>()
   private readonly homeDirectory: string
   private readonly approvalHeuristicDelayMs: number
+  private readonly completionHeuristicDelayMs: number
 
-  constructor(options?: { homeDirectory?: string; approvalHeuristicDelayMs?: number }) {
+  constructor(options?: {
+    homeDirectory?: string
+    approvalHeuristicDelayMs?: number
+    completionHeuristicDelayMs?: number
+  }) {
     this.homeDirectory = options?.homeDirectory ?? homedir()
     this.approvalHeuristicDelayMs = options?.approvalHeuristicDelayMs ?? 7000
+    this.completionHeuristicDelayMs = options?.completionHeuristicDelayMs ?? 10000
   }
 
   onUpdate(listener: RuntimeUpdateListener): () => void {
@@ -250,6 +271,8 @@ export class CharacterRuntimeService {
     })
     entry.approvalCandidate = null
     entry.approvalEvidence = null
+    entry.completionCandidate = null
+    entry.completionTurnEndedAt = null
     entry.fileOffset = 0
     entry.lineBuffer = ''
   }
@@ -291,6 +314,8 @@ export class CharacterRuntimeService {
       sessionId,
     })
     entry.consumedDoneTurnEndedAt = null
+    entry.completionCandidate = null
+    entry.completionTurnEndedAt = null
     entry.fileOffset = 0
     entry.lineBuffer = ''
   }
@@ -319,6 +344,7 @@ export class CharacterRuntimeService {
     }
 
     this.syncApprovalHeuristic(entry, parserMeta?.pendingNeedInputCandidate ?? null)
+    this.syncCompletionHeuristic(entry, parserMeta?.pendingCompletionCandidate ?? null)
 
     const acknowledgedNeedInputAt = entry.state.acknowledgedNeedInputAt
     const heuristicNeedInput =
@@ -327,21 +353,30 @@ export class CharacterRuntimeService {
         : null
     const effectiveNeedsInput = parserState.needsInput || Boolean(heuristicNeedInput)
     const parserDoneTurnEndedAt = parserState.lastTurnEndedAt
+    const heuristicDoneTurnEndedAt =
+      !parserState.unreadDone &&
+      !effectiveNeedsInput &&
+      !parserState.lastError &&
+      entry.completionTurnEndedAt !== null
+        ? entry.completionTurnEndedAt
+        : null
+    const effectiveDoneTurnEndedAt = parserDoneTurnEndedAt ?? heuristicDoneTurnEndedAt
+    const effectiveUnreadDone = parserState.unreadDone || heuristicDoneTurnEndedAt !== null
 
-    if (options.suppressUnreadDone && !effectiveNeedsInput && parserState.unreadDone) {
-      entry.consumedDoneTurnEndedAt = parserDoneTurnEndedAt
+    if (options.suppressUnreadDone && !effectiveNeedsInput && effectiveUnreadDone) {
+      entry.consumedDoneTurnEndedAt = effectiveDoneTurnEndedAt
     }
 
     const hasConsumedCurrentDone =
-      parserState.unreadDone &&
-      parserDoneTurnEndedAt !== null &&
+      effectiveUnreadDone &&
+      effectiveDoneTurnEndedAt !== null &&
       entry.consumedDoneTurnEndedAt !== null &&
-      parserDoneTurnEndedAt === entry.consumedDoneTurnEndedAt
+      effectiveDoneTurnEndedAt === entry.consumedDoneTurnEndedAt
 
     entry.state.isRunning = parserState.isRunning
     entry.state.activeToolName = parserState.activeToolName
     entry.state.lastAssistantPreview = parserState.lastAssistantPreview
-    entry.state.lastTurnEndedAt = parserDoneTurnEndedAt
+    entry.state.lastTurnEndedAt = effectiveDoneTurnEndedAt
     entry.state.lastError = parserState.lastError
     entry.state.needsInput = effectiveNeedsInput
     entry.state.needsInputReason = parserState.needsInput
@@ -356,12 +391,17 @@ export class CharacterRuntimeService {
     entry.state.unreadDone =
       !hasConsumedCurrentDone &&
       !effectiveNeedsInput &&
-      parserState.unreadDone
+      effectiveUnreadDone
 
     if (heuristicNeedInput) {
       entry.state.isRunning = false
       entry.state.activeToolName = null
       entry.state.unreadDone = false
+    }
+
+    if (heuristicDoneTurnEndedAt !== null) {
+      entry.state.isRunning = false
+      entry.state.activeToolName = null
     }
 
     this.syncDoneAutoClear(entry)
@@ -429,6 +469,52 @@ export class CharacterRuntimeService {
     this.syncFromParser(entry)
   }
 
+  private syncCompletionHeuristic(
+    entry: RuntimeEntry,
+    candidate: RuntimeEntry['completionCandidate']
+  ): void {
+    if (!candidate || candidate.engine !== 'claude-code') {
+      this.clearCompletionHeuristic(entry)
+      return
+    }
+
+    const current = entry.completionCandidate
+    const isSameCandidate =
+      current?.anchorType === candidate.anchorType &&
+      current?.detectedAt === candidate.detectedAt
+
+    entry.completionCandidate = candidate
+
+    if (isSameCandidate) {
+      return
+    }
+
+    this.clearCompletionTimer(entry)
+    entry.completionTurnEndedAt = null
+
+    const elapsedMs = Math.max(0, Date.now() - candidate.detectedAt)
+    const remainingMs = this.completionHeuristicDelayMs - elapsedMs
+
+    if (remainingMs <= 0) {
+      entry.completionTurnEndedAt = Date.now()
+      return
+    }
+
+    entry.completionTimer = setTimeout(() => {
+      entry.completionTimer = null
+      const latest = entry.completionCandidate
+      if (
+        !latest ||
+        latest.anchorType !== candidate.anchorType ||
+        latest.detectedAt !== candidate.detectedAt
+      ) {
+        return
+      }
+      entry.completionTurnEndedAt = Date.now()
+      this.syncFromParser(entry)
+    }, remainingMs)
+  }
+
   private syncDoneAutoClear(entry: RuntimeEntry): void {
     const hasTransientState = entry.state.unreadDone || Boolean(entry.state.lastError)
     if (
@@ -462,6 +548,7 @@ export class CharacterRuntimeService {
       entry.doneTimer = null
     }
     this.clearApprovalHeuristic(entry)
+    this.clearCompletionHeuristic(entry)
     if (entry.transcriptPollTimer) {
       clearInterval(entry.transcriptPollTimer)
       entry.transcriptPollTimer = null
@@ -479,6 +566,19 @@ export class CharacterRuntimeService {
     this.clearApprovalTimer(entry)
     entry.approvalCandidate = null
     entry.approvalEvidence = null
+  }
+
+  private clearCompletionTimer(entry: RuntimeEntry): void {
+    if (entry.completionTimer) {
+      clearTimeout(entry.completionTimer)
+      entry.completionTimer = null
+    }
+  }
+
+  private clearCompletionHeuristic(entry: RuntimeEntry): void {
+    this.clearCompletionTimer(entry)
+    entry.completionCandidate = null
+    entry.completionTurnEndedAt = null
   }
 
   private attachTranscript(entry: RuntimeEntry, transcriptPath: string): void {

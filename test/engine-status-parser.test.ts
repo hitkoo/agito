@@ -440,6 +440,74 @@ describe('createClaudeSemanticParser', () => {
     })
   })
 
+  test('completes a Claude null-stop text turn from stop_hook_summary when continuation was not prevented', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: null,
+          content: [{ type: 'text', text: 'Memory snapshot complete.' }],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      unreadDone: false,
+      lastAssistantPreview: 'Memory snapshot complete.',
+    })
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'system',
+        subtype: 'stop_hook_summary',
+        preventedContinuation: false,
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      activeToolName: null,
+      unreadDone: true,
+      needsInput: false,
+      lastAssistantPreview: 'Memory snapshot complete.',
+    })
+  })
+
+  test('does not complete a Claude null-stop text turn from stop_hook_summary when continuation was prevented', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: null,
+          content: [{ type: 'text', text: 'Memory snapshot complete.' }],
+        },
+      })
+    )
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'system',
+        subtype: 'stop_hook_summary',
+        preventedContinuation: true,
+        hookErrors: ['stop blocked'],
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: true,
+      unreadDone: false,
+      needsInput: false,
+      lastAssistantPreview: 'Memory snapshot complete.',
+    })
+  })
+
   test('does not let Claude turn_duration override an existing need_input state', () => {
     const parser = createClaudeSemanticParser()
 
