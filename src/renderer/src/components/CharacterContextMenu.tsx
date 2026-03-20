@@ -1,6 +1,7 @@
 import { type ReactElement, useEffect, useCallback } from 'react'
 import { useUIStore } from '../stores/ui-store'
 import { useCharacterStore } from '../stores/character-store'
+import { useRuntimeStore } from '../stores/runtime-store'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import type { AgitoPersistentData } from '../../../shared/types'
 import { buildSessionResumeInvokeArgs } from '../../../shared/session-resume'
@@ -15,6 +16,9 @@ export function CharacterContextMenu(): ReactElement | null {
   const character = contextMenu
     ? characters.find((c) => c.id === contextMenu.characterId)
     : null
+  const runtimeState = useRuntimeStore((s) =>
+    contextMenu ? s.states[contextMenu.characterId] : undefined
+  )
 
   // Close on ESC
   useEffect(() => {
@@ -46,7 +50,8 @@ export function CharacterContextMenu(): ReactElement | null {
     closeContextMenu()
     // Stop current session if running
     const char = useCharacterStore.getState().characters.find((c) => c.id === characterId)
-    if (char?.currentSessionId) {
+    const runtime = useRuntimeStore.getState().states[characterId]
+    if (char?.currentSessionId || runtime?.hasLiveRuntime) {
       await window.api.invoke(IPC_COMMANDS.SESSION_STOP, { characterId })
       await loadCharacters()
     }
@@ -99,6 +104,9 @@ export function CharacterContextMenu(): ReactElement | null {
 
   if (!contextMenu || !character) return null
 
+  const hasLiveRuntime = runtimeState?.hasLiveRuntime === true
+  const hasAssignedRuntime = hasLiveRuntime || character.currentSessionId !== null
+
   const menuItemClass =
     'relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground'
 
@@ -109,16 +117,20 @@ export function CharacterContextMenu(): ReactElement | null {
       onMouseDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {character.currentSessionId === null ? (
+      {!hasAssignedRuntime ? (
         <button className={menuItemClass} onClick={handleAssignSession}>
           Assign Session
         </button>
       ) : (
         <>
-          <button className={menuItemClass} onClick={handleRefreshSession}>
-            Refresh Session
-          </button>
-          <div className="my-1 h-px bg-border" />
+          {character.currentSessionId !== null ? (
+            <>
+              <button className={menuItemClass} onClick={handleRefreshSession}>
+                Refresh Session
+              </button>
+              <div className="my-1 h-px bg-border" />
+            </>
+          ) : null}
           <button className={menuItemClass} onClick={handleAssignSession}>
             Assign Other Session
           </button>

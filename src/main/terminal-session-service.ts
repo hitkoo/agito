@@ -4,6 +4,15 @@ import { SerializeAddon } from '@xterm/addon-serialize'
 interface HeadlessTerminalLike {
   cols: number
   rows: number
+  buffer: {
+    active: {
+      viewportY: number
+      length: number
+      getLine(y: number): {
+        translateToString(trimRight?: boolean, startColumn?: number, endColumn?: number): string
+      } | undefined
+    }
+  }
   write(data: string, callback?: () => void): void
   resize(cols: number, rows: number): void
   loadAddon(addon: { activate(terminal: unknown): void; dispose(): void }): void
@@ -51,6 +60,8 @@ interface SpawnHooks {
   onExit?: (event: { exitCode: number; signal?: number }) => void
 }
 
+type TerminalOutputListener = (data: string) => void
+
 function createHeadlessSession(characterId: string): TerminalSession {
   const terminal = new HeadlessTerminal({
     allowProposedApi: true,
@@ -78,6 +89,7 @@ function createHeadlessSession(characterId: string): TerminalSession {
 
 export class TerminalSessionService {
   private sessions = new Map<string, TerminalSession>()
+  private outputListeners = new Map<string, Set<TerminalOutputListener>>()
 
   private getOrCreateSession(characterId: string): TerminalSession {
     const existing = this.sessions.get(characterId)
@@ -141,6 +153,7 @@ export class TerminalSessionService {
       session.seq = seq
       session.bootstrapping = false
       this.queueTerminalWrite(session, data, seq)
+      this.outputListeners.get(characterId)?.forEach((listener) => listener(data))
       hooks.onData?.(data, seq)
     })
 
@@ -189,6 +202,29 @@ export class TerminalSessionService {
     }
   }
 
+  async getRenderedText(characterId: string): Promise<string> {
+    const session = this.sessions.get(characterId)
+    if (!session) return ''
+
+    await session.parseQueue.catch(() => undefined)
+
+    const activeBuffer = session.terminal.buffer.active
+    const startLine = activeBuffer.viewportY
+    const endLine = Math.min(startLine + session.terminal.rows, activeBuffer.length)
+    const lines: string[] = []
+
+    for (let lineIndex = startLine; lineIndex < endLine; lineIndex += 1) {
+      const line = activeBuffer.getLine(lineIndex)
+      lines.push(line?.translateToString(true) ?? '')
+    }
+
+    while (lines.length > 0 && lines[lines.length - 1] === '') {
+      lines.pop()
+    }
+
+    return lines.join('\n')
+  }
+
   hasSession(characterId: string): boolean {
     return this.sessions.has(characterId)
   }
@@ -218,6 +254,21 @@ export class TerminalSessionService {
   killAll(): void {
     for (const session of this.sessions.values()) {
       session.pty?.kill()
+    }
+  }
+
+  onOutput(characterId: string, listener: TerminalOutputListener): () => void {
+    const listeners = this.outputListeners.get(characterId) ?? new Set<TerminalOutputListener>()
+    listeners.add(listener)
+    this.outputListeners.set(characterId, listeners)
+
+    return () => {
+      const current = this.outputListeners.get(characterId)
+      if (!current) return
+      current.delete(listener)
+      if (current.size === 0) {
+        this.outputListeners.delete(characterId)
+      }
     }
   }
 

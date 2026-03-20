@@ -28,6 +28,12 @@ import {
   mergeCodexScannedSessions,
   scanCodexSessionFiles,
 } from './session-scan'
+import {
+  createUuidV7,
+  findClaudeSessionArtifactPath,
+  findCodexSessionArtifactPath,
+  parseLastSessionIdFromStatusOutput,
+} from './session-sync'
 
 // 16ms PTY output batching (~60fps) to prevent xterm.js write() flooding
 const PTY_BATCH_MS = 16
@@ -164,6 +170,11 @@ export function registerIPCHandlers(
   runtimeService.onUpdate((state) => {
     broadcastToAll(IPC_EVENTS.CHARACTER_RUNTIME, state)
   })
+  const liveRuntimeMetadata = new Map<string, {
+    engine: EngineType
+    workingDirectory: string
+    claudeStartSessionId: string | null
+  }>()
   authService.onUpdate((state) => {
     broadcastToAll(IPC_EVENTS.AUTH_SESSION_CHANGED, state)
   })
@@ -180,6 +191,72 @@ export function registerIPCHandlers(
     }
   }
 
+  const persistVerifiedSessionId = (args: {
+    characterId: string
+    sessionId: string
+    engineType: EngineType
+    workingDirectory: string
+  }): void => {
+    const now = new Date().toISOString()
+    const sessions = store.getSessions()
+    store.saveSessions(
+      upsertSessionMappingOnResume({
+        sessions,
+        characterId: args.characterId,
+        sessionId: args.sessionId,
+        workingDirectory: args.workingDirectory,
+        engineType: args.engineType,
+        now,
+        overwriteExistingMetadata: true,
+      })
+    )
+
+    const characters = store.getCharacters()
+    const updatedCharacters = characters.map((character) =>
+      character.id === args.characterId
+        ? {
+            ...character,
+            currentSessionId: args.sessionId,
+            engine: args.engineType,
+            sessionHistory: [
+              args.sessionId,
+              ...character.sessionHistory.filter((id) => id !== args.sessionId),
+            ].slice(0, MAX_SESSION_HISTORY),
+          }
+        : character
+    )
+    store.saveCharacters(updatedCharacters)
+    runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
+    broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
+  }
+
+  const waitForCodexStatusSessionId = async (
+    characterId: string,
+    timeoutMs = 5000
+  ): Promise<string | null> => {
+    if (!terminalSessions.isAlive(characterId)) return null
+    const delay = (ms: number) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms))
+
+    for (const char of '/status') {
+      terminalSessions.write(characterId, char)
+      await delay(12)
+    }
+    await delay(12)
+    terminalSessions.write(characterId, '\r')
+
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      await delay(80)
+      const renderedText = await terminalSessions.getRenderedText(characterId)
+      const sessionId = parseLastSessionIdFromStatusOutput(renderedText)
+      if (sessionId) {
+        return sessionId
+      }
+    }
+
+    return null
+  }
+
   const spawnManagedSession = (
     characterId: string,
     command: string,
@@ -192,6 +269,8 @@ export function registerIPCHandlers(
       },
       onExit: () => {
         flushPtyData(characterId, broadcastToAll)
+        runtimeService.setLiveRuntime(characterId, false)
+        liveRuntimeMetadata.delete(characterId)
       },
     })
   }
@@ -225,6 +304,17 @@ export function registerIPCHandlers(
     })
 
     spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, sessionMapping.workingDirectory)
+    liveRuntimeMetadata.set(characterId, {
+      engine: sessionMapping.engineType,
+      workingDirectory: sessionMapping.workingDirectory,
+      claudeStartSessionId: null,
+    })
+    runtimeService.startSession({
+      characterId,
+      engine: sessionMapping.engineType,
+      sessionId: character.currentSessionId,
+      workingDirectory: sessionMapping.workingDirectory,
+    })
   }
 
   // --- Store operations ---
@@ -408,7 +498,6 @@ export function registerIPCHandlers(
   ipcMain.handle(
     IPC_COMMANDS.SESSION_START,
     async (_, args: { characterId: string; workingDirectory: string; engine: EngineType }) => {
-      const { nanoid } = await import('nanoid')
       const { characterId, workingDirectory, engine } = args
 
       if (!existsSync(workingDirectory)) {
@@ -422,42 +511,88 @@ export function registerIPCHandlers(
       const adapter = getEngineAdapter(engine)
 
       const soulContent = readCharacterSoul(character)
-
-      const spawnArgs = adapter.buildSpawnArgs({ soulPath: soulContent, workingDirectory })
-      spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
-
-      const sessionId = nanoid()
-      const now = new Date().toISOString()
-
-      const sessionMapping: SessionMapping = {
-        characterId,
-        sessionId,
-        engineType: engine,
+      const startSessionId = engine === 'claude-code' ? createUuidV7() : undefined
+      const spawnArgs = adapter.buildSpawnArgs({
+        startSessionId,
+        soulPath: soulContent,
         workingDirectory,
-        createdAt: now,
-        lastActiveAt: now,
-      }
-
-      const sessions = store.getSessions()
-      store.saveSessions([...sessions, sessionMapping])
-
-      const updatedHistory = [sessionId, ...character.sessionHistory].slice(0, MAX_SESSION_HISTORY)
+      })
+      spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
       const updatedCharacters = characters.map((c) =>
         c.id === characterId
-          ? { ...c, currentSessionId: sessionId, sessionHistory: updatedHistory, engine }
+          ? { ...c, currentSessionId: null, engine }
           : c
       )
       store.saveCharacters(updatedCharacters)
       runtimeService.startSession({
         characterId,
         engine,
-        sessionId,
+        sessionId: null,
         workingDirectory,
+      })
+      liveRuntimeMetadata.set(characterId, {
+        engine,
+        workingDirectory,
+        claudeStartSessionId: startSessionId ?? null,
       })
       runtimeService.syncCharacters(store.getCharacters(), store.getSessions())
       broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'characters' })
 
-      return { sessionId, characterId }
+      return { sessionId: null, characterId }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_COMMANDS.SESSION_SYNC,
+    async (_, args: { characterId: string }) => {
+      const { characterId } = args
+      const characters = store.getCharacters()
+      const character = characters.find((candidate) => candidate.id === characterId)
+      if (!character) throw new Error(`Character not found: ${characterId}`)
+
+      const runtimeMeta = liveRuntimeMetadata.get(characterId)
+      const runtimeState = runtimeService.getState(characterId)
+      if (!runtimeMeta || !runtimeState?.hasLiveRuntime) {
+        return {
+          sessionId: character.currentSessionId,
+          message: '세션을 찾을 수 없습니다. 턴을 진행한 뒤 다시 시도해주세요.',
+        }
+      }
+
+      let candidateSessionId: string | null = null
+      if (runtimeMeta.engine === 'claude-code') {
+        candidateSessionId = runtimeMeta.claudeStartSessionId ?? character.currentSessionId
+      } else {
+        candidateSessionId = await waitForCodexStatusSessionId(characterId)
+      }
+
+      if (!candidateSessionId) {
+        return {
+          sessionId: character.currentSessionId,
+          message: '세션을 찾을 수 없습니다. 턴을 진행한 뒤 다시 시도해주세요.',
+        }
+      }
+
+      const artifactPath =
+        runtimeMeta.engine === 'claude-code'
+          ? findClaudeSessionArtifactPath(homedir(), candidateSessionId)
+          : findCodexSessionArtifactPath(homedir(), candidateSessionId)
+
+      if (!artifactPath) {
+        return {
+          sessionId: character.currentSessionId,
+          message: '세션을 찾을 수 없습니다. 턴을 진행한 뒤 다시 시도해주세요.',
+        }
+      }
+
+      persistVerifiedSessionId({
+        characterId,
+        sessionId: candidateSessionId,
+        engineType: runtimeMeta.engine,
+        workingDirectory: runtimeMeta.workingDirectory,
+      })
+
+      return { sessionId: candidateSessionId }
     }
   )
 
@@ -504,6 +639,11 @@ export function registerIPCHandlers(
 
       const spawnArgs = adapter.buildSpawnArgs({ sessionId, soulPath: soulContent, workingDirectory })
       spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
+      liveRuntimeMetadata.set(characterId, {
+        engine: engineType,
+        workingDirectory,
+        claudeStartSessionId: null,
+      })
 
       const now = new Date().toISOString()
       store.saveSessions(
@@ -542,6 +682,7 @@ export function registerIPCHandlers(
     const { characterId } = args
 
     terminalSessions.kill(characterId)
+    liveRuntimeMetadata.delete(characterId)
     runtimeService.stopSession(characterId)
 
     const characters = store.getCharacters()

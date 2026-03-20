@@ -32,6 +32,7 @@ export const IPC_COMMANDS = {
 
   // Session operations
   SESSION_START: 'session:start',
+  SESSION_SYNC: 'session:sync',
   SESSION_RESUME: 'session:resume',
   SESSION_STOP: 'session:stop',
   SESSION_SCAN: 'session:scan',

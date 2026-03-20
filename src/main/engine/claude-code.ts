@@ -7,7 +7,9 @@ export const claudeCodeAdapter: EngineAdapter = {
 
   buildSpawnArgs(options: EngineSpawnOptions): string[] {
     const args: string[] = []
-    if (options.sessionId) {
+    if (options.startSessionId) {
+      args.push('--session-id', options.startSessionId)
+    } else if (options.sessionId) {
       args.push('--resume', options.sessionId)
     }
     if (options.soulPath) {

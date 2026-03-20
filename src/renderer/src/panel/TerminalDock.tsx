@@ -8,10 +8,12 @@ import {
   useState,
 } from "react";
 import {
+  ArrowUpDown,
+  EllipsisVertical,
   LoaderCircle,
   Minus,
-  MoreHorizontal,
   Plus,
+  RefreshCcw,
   RefreshCw,
   SquareSplitHorizontal,
   SquareSplitVertical,
@@ -64,6 +66,7 @@ import {
   getCharacterStatusBadgeState,
   getCharacterDockPresence,
   getClosedCharacters,
+  getCharacterSessionMenuActions,
   getMinimizedCharacters,
   getSurfaceDropInsertIndex,
   getSurfaceReorderIndexFromDropTarget,
@@ -498,10 +501,12 @@ export function TerminalDock(): ReactElement | null {
         const character = useCharacterStore
           .getState()
           .characters.find((entry) => entry.id === characterId);
+        const runtimeState =
+          useRuntimeStore.getState().states[characterId];
         if (!character) return;
 
         if (action === "unassign") {
-          if (!character.currentSessionId) return;
+          if (!character.currentSessionId && !runtimeState?.hasLiveRuntime) return;
           await window.api.invoke(IPC_COMMANDS.SESSION_STOP, { characterId });
           await loadCharacters();
           return;
@@ -563,6 +568,28 @@ export function TerminalDock(): ReactElement | null {
       }
     },
     [bumpTerminalRefreshKey, loadCharacters],
+  );
+
+  const handleTerminalSessionSync = useCallback(
+    async (characterId: string) => {
+      try {
+        const result = await window.api.invoke<{
+          sessionId: string | null;
+          message?: string;
+        }>(IPC_COMMANDS.SESSION_SYNC, {
+          characterId,
+        });
+        if (result.message) {
+          toast.error(result.message);
+        }
+        await loadCharacters();
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to sync session.",
+        );
+      }
+    },
+    [loadCharacters],
   );
 
   const minimizedCharacters = useMemo(() => {
@@ -687,8 +714,10 @@ export function TerminalDock(): ReactElement | null {
           setDraggedSurface={setDraggedSurface}
           setLayout={setTerminalDockLayout}
           onCreateCharacter={handleCreateCharacter}
+          onSessionAction={handleGlobalCharacterSessionAction}
           bumpTerminalRefreshKey={bumpTerminalRefreshKey}
           onRefreshSession={handleTerminalSessionRefresh}
+          onSyncSession={handleTerminalSessionSync}
         />
       </div>
 
@@ -754,8 +783,10 @@ function DockNodeView({
   setDraggedSurface,
   setLayout,
   onCreateCharacter,
+  onSessionAction,
   bumpTerminalRefreshKey,
   onRefreshSession,
+  onSyncSession,
 }: {
   node: DockLayoutNode;
   layout: DockLayout;
@@ -768,8 +799,13 @@ function DockNodeView({
   setDraggedSurface: (payload: SurfaceDragPayload | null) => void;
   setLayout: (layout: DockLayout) => void;
   onCreateCharacter: (paneId: string) => Promise<void>;
+  onSessionAction: (
+    characterId: string,
+    action: GlobalCharacterSessionAction,
+  ) => Promise<void>;
   bumpTerminalRefreshKey: (characterId: string) => void;
   onRefreshSession: (characterId: string) => Promise<void>;
+  onSyncSession: (characterId: string) => Promise<void>;
 }): ReactElement {
   if (node.type === "split") {
     return (
@@ -803,8 +839,10 @@ function DockNodeView({
                 setDraggedSurface={setDraggedSurface}
                 setLayout={setLayout}
                 onCreateCharacter={onCreateCharacter}
+                onSessionAction={onSessionAction}
                 bumpTerminalRefreshKey={bumpTerminalRefreshKey}
                 onRefreshSession={onRefreshSession}
+                onSyncSession={onSyncSession}
               />
             </Panel>
             {index < node.children.length - 1 ? (
@@ -829,8 +867,10 @@ function DockNodeView({
       setDraggedSurface={setDraggedSurface}
       setLayout={setLayout}
       onCreateCharacter={onCreateCharacter}
+      onSessionAction={onSessionAction}
       bumpTerminalRefreshKey={bumpTerminalRefreshKey}
       onRefreshSession={onRefreshSession}
+      onSyncSession={onSyncSession}
     />
   );
 }
@@ -867,8 +907,10 @@ function DockPaneView({
   setDraggedSurface,
   setLayout,
   onCreateCharacter,
+  onSessionAction,
   bumpTerminalRefreshKey,
   onRefreshSession,
+  onSyncSession,
 }: {
   pane: DockPaneNode;
   layout: DockLayout;
@@ -881,8 +923,13 @@ function DockPaneView({
   setDraggedSurface: (payload: SurfaceDragPayload | null) => void;
   setLayout: (layout: DockLayout) => void;
   onCreateCharacter: (paneId: string) => Promise<void>;
+  onSessionAction: (
+    characterId: string,
+    action: GlobalCharacterSessionAction,
+  ) => Promise<void>;
   bumpTerminalRefreshKey: (characterId: string) => void;
   onRefreshSession: (characterId: string) => Promise<void>;
+  onSyncSession: (characterId: string) => Promise<void>;
 }): ReactElement {
   const isFocused = layout.focusedPaneId === pane.id;
   const [paneHasTerminalFocus, setPaneHasTerminalFocus] = useState(false);
@@ -897,9 +944,13 @@ function DockPaneView({
   const activeCharacter = activeSurface
     ? (charactersById.get(activeSurface.characterId) ?? null)
     : null;
+  const activeRuntimeState = useRuntimeStore((s) =>
+    activeSurface ? s.states[activeSurface.characterId] : undefined,
+  );
   const shouldRenderTerminal = shouldRenderAssignedTerminal({
     activeCharacterId: activeSurface?.characterId ?? null,
     hasAssignedSession: Boolean(activeCharacter?.currentSessionId),
+    hasLiveRuntime: activeRuntimeState?.hasLiveRuntime === true,
   });
 
   const focusPane = useCallback(() => {
@@ -984,6 +1035,9 @@ function DockPaneView({
               }
               onClose={() =>
                 setLayout(closeDockSurface(layout, pane.id, surface.id))
+              }
+              onSessionAction={(action) =>
+                void onSessionAction(surface.characterId, action)
               }
               onRefresh={() => {
                 if (surface.characterId) {
@@ -1095,14 +1149,26 @@ function DockPaneView({
       >
         {activeCharacter && shouldRenderTerminal && paneHasTerminalFocus && (
           <div className="pointer-events-none absolute right-2 top-2 z-20">
-            <button
-              className="pointer-events-auto flex h-[18px] w-[18px] items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => void onRefreshSession(activeCharacter.id)}
-              title="Refresh terminal"
-            >
-              <RefreshCw className="h-3 w-3" />
-            </button>
+            <div className="pointer-events-auto flex items-center gap-1">
+              <button
+                className="flex h-[18px] w-[18px] items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => void onSyncSession(activeCharacter.id)}
+                title="Sync session"
+              >
+                <ArrowUpDown className="h-3 w-3" />
+              </button>
+              {activeCharacter.currentSessionId ? (
+                <button
+                  className="flex h-[18px] w-[18px] items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => void onRefreshSession(activeCharacter.id)}
+                  title="Refresh terminal"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                </button>
+              ) : null}
+            </div>
           </div>
         )}
         {activeCharacter && shouldRenderTerminal && (
@@ -1134,6 +1200,7 @@ function SurfaceTab({
   showLeadingDrop,
   onSelect,
   onClose,
+  onSessionAction,
   onRefresh,
   onDragStart,
   onDragEnd,
@@ -1147,6 +1214,7 @@ function SurfaceTab({
   showLeadingDrop: boolean;
   onSelect: () => void;
   onClose: () => void;
+  onSessionAction: (action: GlobalCharacterSessionAction) => void;
   onRefresh: () => void;
   onDragStart: (payload: SurfaceDragPayload) => void;
   onDragEnd: () => void;
@@ -1197,47 +1265,61 @@ function SurfaceTab({
       {showLeadingDrop && (
         <div className="absolute left-0 top-0 bottom-0 z-10 w-0.5 bg-foreground/60" />
       )}
-      <button
+      <div
         className={cn(
-          "group flex h-7 items-center gap-1.5 border-r border-border px-2 text-[11px] leading-none transition-colors",
+          "group flex h-7 items-center gap-1 border-r border-border px-2 text-[11px] leading-none transition-colors",
           isActive
             ? "bg-background text-foreground"
             : "bg-transparent text-muted-foreground hover:bg-muted/35 hover:text-foreground",
         )}
-        onClick={onSelect}
-        title={character?.name ?? surface.characterId}
       >
-        {skinPreview ? (
-          <img
-            src={skinPreview}
-            alt=""
-            className="h-4 w-4 shrink-0 object-contain"
-            style={{ imageRendering: "pixelated" }}
-          />
-        ) : (
-          <span className="flex h-4 w-4 items-center justify-center rounded bg-muted text-[9px]">
-            {(character?.name ?? surface.characterId)[0]}
+        <button
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          onClick={onSelect}
+          title={character?.name ?? surface.characterId}
+        >
+          {skinPreview ? (
+            <img
+              src={skinPreview}
+              alt=""
+              className="h-4 w-4 shrink-0 object-contain"
+              style={{ imageRendering: "pixelated" }}
+            />
+          ) : (
+            <span className="flex h-4 w-4 items-center justify-center rounded bg-muted text-[9px]">
+              {(character?.name ?? surface.characterId)[0]}
+            </span>
+          )}
+          <span className="max-w-[120px] truncate">
+            {character?.name ?? surface.characterId}
           </span>
-        )}
-        <span className="max-w-[120px] truncate">
-          {character?.name ?? surface.characterId}
-        </span>
+        </button>
         <span className="ml-0.5 flex h-2.5 w-2.5 shrink-0 items-center justify-center self-center">
           <CharacterStatusBadge
             status={status}
             className="h-2.5 w-2.5 shrink-0"
           />
         </span>
-        <span
+        <CharacterSessionMenuTrigger
+          character={character}
+          hasLiveRuntime={runtimeState?.hasLiveRuntime === true}
+          onSessionAction={onSessionAction}
+          triggerClassName={cn(
+            "ml-0.5 h-3.5 w-3.5",
+            isActive ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          )}
+        />
+        <button
           className="ml-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-[opacity,background-color,color] group-hover:opacity-100 hover:bg-muted/60 hover:text-foreground"
           onClick={(event) => {
             event.stopPropagation();
             onClose();
           }}
+          title={`${character?.name ?? surface.characterId} close`}
         >
           <X className="h-3 w-3" />
-        </span>
-      </button>
+        </button>
+      </div>
     </div>
   );
 }
@@ -1424,75 +1506,108 @@ function GlobalCharacterTab({
   );
 
   return (
+    <div className="group relative h-full shrink-0">
+      <button
+        className={cn(
+          "relative flex h-full aspect-square shrink-0 items-center justify-center rounded-md p-1 transition-colors",
+          presence === "focused-active"
+            ? "bg-background shadow-[inset_0_0_0_1px_hsl(var(--border))]"
+            : presence === "open"
+              ? "bg-muted/60 hover:bg-muted"
+              : "hover:bg-muted/50",
+        )}
+        onClick={onClick}
+        title={character.name}
+      >
+        {skinPreview ? (
+          <img
+            src={skinPreview}
+            alt=""
+            className="h-full w-full object-contain"
+            style={{ imageRendering: "pixelated" }}
+          />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center rounded bg-muted text-[10px]">
+            {character.name[0]}
+          </span>
+        )}
+        <CharacterStatusBadge
+          status={status}
+          className={cn(
+            "absolute left-0.5 top-0.5 h-2.5 w-2.5",
+            presence === "closed" && "opacity-60",
+          )}
+        />
+      </button>
+
+      <CharacterSessionMenuTrigger
+        character={character}
+        hasLiveRuntime={runtimeState?.hasLiveRuntime === true}
+        onSessionAction={onSessionAction}
+        align="end"
+        sideOffset={6}
+        triggerClassName={cn(
+          "absolute right-0.5 top-0.5 z-10 bg-background/90 shadow-sm backdrop-blur-sm",
+          presence === "focused-active"
+            ? "opacity-100"
+            : "opacity-0 group-hover:opacity-100",
+        )}
+      />
+    </div>
+  );
+}
+
+function CharacterSessionMenuTrigger({
+  character,
+  hasLiveRuntime = false,
+  onSessionAction,
+  align = "end",
+  sideOffset = 4,
+  triggerClassName,
+}: {
+  character: Character | null;
+  hasLiveRuntime?: boolean;
+  onSessionAction: (action: GlobalCharacterSessionAction) => void;
+  align?: "start" | "center" | "end";
+  sideOffset?: number;
+  triggerClassName?: string;
+}): ReactElement | null {
+  if (!character) return null;
+
+  const actions = getCharacterSessionMenuActions(
+    character.currentSessionId,
+    hasLiveRuntime,
+  );
+
+  return (
     <DropdownMenu>
-      <div className="group relative h-full shrink-0">
+      <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "relative flex h-full aspect-square shrink-0 items-center justify-center rounded-md p-1 transition-colors",
-            presence === "focused-active"
-              ? "bg-background shadow-[inset_0_0_0_1px_hsl(var(--border))]"
-              : presence === "open"
-                ? "bg-muted/60 hover:bg-muted"
-                : "hover:bg-muted/50",
+            "flex items-center justify-center rounded-sm text-muted-foreground transition-[opacity,background-color,color] hover:bg-muted/60 hover:text-foreground",
+            triggerClassName,
           )}
-          onClick={onClick}
-          title={character.name}
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+          title={`${character.name} menu`}
         >
-          {skinPreview ? (
-            <img
-              src={skinPreview}
-              alt=""
-              className="h-full w-full object-contain"
-              style={{ imageRendering: "pixelated" }}
-            />
-          ) : (
-            <span className="flex h-full w-full items-center justify-center rounded bg-muted text-[10px]">
-              {character.name[0]}
-            </span>
-          )}
-          <CharacterStatusBadge
-            status={status}
-            className={cn(
-              "absolute left-0.5 top-0.5 h-2.5 w-2.5",
-              presence === "closed" && "opacity-60",
-            )}
-          />
+          <EllipsisVertical className="h-2.5 w-2.5" />
         </button>
-
-        <DropdownMenuTrigger asChild>
-          <button
-            className={cn(
-              "absolute right-0.5 top-0.5 z-10 flex h-3.5 w-3.5 items-center justify-center rounded-sm bg-background/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-opacity hover:bg-background hover:text-foreground",
-              presence === "focused-active"
-                ? "opacity-100"
-                : "opacity-0 group-hover:opacity-100",
-            )}
-            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-            onClick={(event) => event.stopPropagation()}
-            onMouseDown={(event) => event.stopPropagation()}
-            title={`${character.name} menu`}
-          >
-            <MoreHorizontal className="h-2.5 w-2.5" />
-          </button>
-        </DropdownMenuTrigger>
-      </div>
-
-      <DropdownMenuContent align="end" sideOffset={6} className="w-[180px]">
-        {character.currentSessionId === null ? (
-          <DropdownMenuItem onClick={() => onSessionAction("assign")}>
-            Assign Session
-          </DropdownMenuItem>
-        ) : (
-          <>
-            <DropdownMenuItem onClick={() => onSessionAction("reassign")}>
-              Reassign Session
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align={align} sideOffset={sideOffset} className="w-[180px]">
+        {actions.map((action, index) => (
+          <Fragment key={action}>
+            {action === "unassign" && index > 0 ? <DropdownMenuSeparator /> : null}
+            <DropdownMenuItem onClick={() => onSessionAction(action)}>
+              {action === "assign"
+                ? "Assign Session"
+                : action === "reassign"
+                  ? "Reassign Session"
+                  : "Unassign Session"}
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => onSessionAction("unassign")}>
-              Unassign Session
-            </DropdownMenuItem>
-          </>
-        )}
+          </Fragment>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );

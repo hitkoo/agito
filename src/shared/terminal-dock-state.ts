@@ -73,8 +73,11 @@ export function canHydrateTerminalViewport(input: TerminalViewportMeasureInput):
 export function shouldRenderAssignedTerminal(input: {
   activeCharacterId: string | null
   hasAssignedSession: boolean
+  hasLiveRuntime: boolean
 }): boolean {
-  return Boolean(input.activeCharacterId && input.hasAssignedSession)
+  return Boolean(
+    input.activeCharacterId && (input.hasAssignedSession || input.hasLiveRuntime)
+  )
 }
 
 export function shouldKeepTerminalLoading(input: {

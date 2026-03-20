@@ -7,6 +7,7 @@ export interface EngineAdapter {
 
 export interface EngineSpawnOptions {
   sessionId?: string
+  startSessionId?: string
   soulPath?: string
   workingDirectory: string
   additionalArgs?: string[]

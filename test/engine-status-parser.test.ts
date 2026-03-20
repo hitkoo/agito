@@ -477,6 +477,76 @@ describe('createClaudeSemanticParser', () => {
     })
   })
 
+  test('ignores synthetic Claude resume stop_sequence messages for semantic status', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          model: '<synthetic>',
+          stop_reason: 'stop_sequence',
+          content: [{ type: 'text', text: 'No response requested.' }],
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      activeToolName: null,
+      unreadDone: false,
+      needsInput: false,
+      lastAssistantPreview: null,
+    })
+  })
+
+  test('ignores Claude completed task notifications instead of treating them as new user turns', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content:
+            '<task-notification>\n<status>completed</status>\n<summary>Background command completed</summary>\n</task-notification>\nRead the output file to retrieve the result.',
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      activeToolName: null,
+      unreadDone: false,
+      needsInput: false,
+      lastAssistantPreview: null,
+    })
+  })
+
+  test('ignores Claude killed task notifications instead of treating them as new user turns', () => {
+    const parser = createClaudeSemanticParser()
+
+    parser.ingestLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content:
+            '<task-notification>\n<status>killed</status>\n<summary>Background command was stopped</summary>\n</task-notification>\nRead the output file to retrieve the result.',
+        },
+      })
+    )
+
+    expect(parser.getState()).toMatchObject({
+      isRunning: false,
+      activeToolName: null,
+      unreadDone: false,
+      needsInput: false,
+      lastAssistantPreview: null,
+    })
+  })
+
   test('does not complete a Claude null-stop text turn from stop_hook_summary when continuation was prevented', () => {
     const parser = createClaudeSemanticParser()
 
