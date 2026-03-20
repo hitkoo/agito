@@ -19,15 +19,18 @@ import {
   TERMINAL_DOCK_BAR_DEFAULT_HEIGHT,
 } from '../shared/terminal-dock-bar'
 import { DeepLinkOAuthCallbackCoordinator } from './auth/oauth-callback'
+import { DeepLinkBillingCheckoutCoordinator } from './billing-callback'
 
 let mainWindow: BrowserWindow | null = null
 let detachedTerminalWindow: BrowserWindow | null = null
 const AUTH_PROTOCOL_SCHEME = 'agito'
 const authDeepLinkCoordinator = new DeepLinkOAuthCallbackCoordinator(AUTH_PROTOCOL_SCHEME)
+const billingDeepLinkCoordinator = new DeepLinkBillingCheckoutCoordinator(AUTH_PROTOCOL_SCHEME)
 
 app.on('open-url', (event, url) => {
   event.preventDefault()
-  authDeepLinkCoordinator.handleOpenUrl(url)
+  if (authDeepLinkCoordinator.handleOpenUrl(url)) return
+  billingDeepLinkCoordinator.handleOpenUrl(url)
 })
 
 function loadRenderer(window: BrowserWindow, mode?: 'terminal-dock'): void {
@@ -88,6 +91,8 @@ app.whenReady().then(() => {
   registerIPCHandlers(store, {
     authProtocolScheme: AUTH_PROTOCOL_SCHEME,
     authDeepLinkCoordinator,
+    billingProtocolScheme: AUTH_PROTOCOL_SCHEME,
+    billingDeepLinkCoordinator,
   })
 
   createWindow()

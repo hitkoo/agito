@@ -1,12 +1,26 @@
-import { ipcMain, BrowserWindow, dialog, app } from 'electron'
+import { ipcMain, BrowserWindow, dialog, app, shell } from 'electron'
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, copyFileSync, statSync } from 'fs'
 import initSqlJs from 'sql.js'
 import { join, basename, extname } from 'path'
 import { homedir } from 'os'
 import { IPC_COMMANDS, IPC_EVENTS } from '../shared/ipc-channels'
-import type { Character, EngineType, RoomLayout, SessionMapping, AgitoSettings, AssetGenerateRequest, AssetGenerateResult, ScannedSession } from '../shared/types'
+import type {
+  Character,
+  EngineType,
+  RoomLayout,
+  SessionMapping,
+  AgitoSettings,
+  AssetGenerateRequest,
+  AssetCategory,
+  GenerateJob,
+  GenerateJobPreviewUrls,
+  GenerateJobResultItem,
+  SaveGeneratedResultResponse,
+  ScannedSession,
+} from '../shared/types'
 import { upsertSessionMappingOnResume } from '../shared/session-resume'
 import { canAccessGenerate, type AuthSessionState } from '../shared/auth'
+import type { BillingCheckoutSessionRequest, BillingCheckoutSessionResponse, BillingState } from '../shared/billing'
 import { hasSupabasePublicConfig, publicConfig } from '../shared/public-config'
 import type { AgitoStore } from './store'
 import { TerminalSessionService } from './terminal-session-service'
@@ -19,6 +33,14 @@ import { MainAuthService, type AuthProviderAdapter, type AuthProviderResult } fr
 import { createCredentialStore, type StoredAuthSession } from './auth/credential-store'
 import { SupabaseAuthProvider } from './auth/supabase-auth-provider'
 import type { DeepLinkOAuthCallbackCoordinator } from './auth/oauth-callback'
+import { buildBillingCheckoutRedirectTargets, type DeepLinkBillingCheckoutCoordinator } from './billing-callback'
+import {
+  buildGeneratedJobPreviewUrlsRequest,
+} from './generated-preview'
+import { mapGeneratedJob, type GeneratedJobApiPayload } from './generated-job'
+import { createGeneratedJobListLoader } from './generated-job-list'
+import { buildGeneratedResultDownloadRequest } from './generated-result-save'
+import { ApiRequestError, normalizeApiError } from './http-error'
 import {
   type CodexSessionIndexEntry,
   extractClaudeSessionLabelsFromHistory,
@@ -89,6 +111,8 @@ export function registerIPCHandlers(
   options?: {
     authProtocolScheme?: string
     authDeepLinkCoordinator?: DeepLinkOAuthCallbackCoordinator
+    billingProtocolScheme?: string
+    billingDeepLinkCoordinator?: DeepLinkBillingCheckoutCoordinator
   }
 ): void {
   const terminalSessions = new TerminalSessionService()
@@ -162,6 +186,78 @@ export function registerIPCHandlers(
     console.error('[AUTH] Failed to initialize session', error)
     return authService.getState()
   })
+
+  const parseJsonSafely = async <T>(response: Response): Promise<T | null> => {
+    try {
+      return await response.json() as T
+    } catch {
+      return null
+    }
+  }
+
+  const getAccessToken = async (): Promise<string> => {
+    await authReady
+    const authState = authService.getState()
+    if (!canAccessGenerate(authState.status)) {
+      throw new Error('Sign in to continue.')
+    }
+
+    const authSession = await credentialStore.getSession()
+    if (!authSession?.accessToken) {
+      throw new Error('Missing auth session. Sign in again to continue.')
+    }
+    return authSession.accessToken
+  }
+
+  const fetchAuthenticatedJson = async <T>(
+    path: string,
+    init?: {
+      method?: string
+      body?: string
+    }
+  ): Promise<T> => {
+    const accessToken = await getAccessToken()
+    const response = await fetch(`${publicConfig.apiUrl}${path}`, {
+      method: init?.method ?? 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: init?.body,
+      signal: AbortSignal.timeout(30_000),
+    })
+
+    if (!response.ok) {
+      const error = await normalizeApiError(response)
+      if (error.status === 401 || error.status === 403) {
+        try {
+          await authService.signOut()
+        } catch (signOutError) {
+          console.error('[AUTH] Failed to clear invalid session after API auth error', signOutError)
+        }
+      }
+      throw error
+    }
+
+    const data = await parseJsonSafely<T>(response)
+    if (data === null) {
+      throw new Error('Server returned an empty response.')
+    }
+    return data
+  }
+
+  const loadGeneratedJobs = createGeneratedJobListLoader(async () => {
+    const response = await fetchAuthenticatedJson<{
+      jobs: GeneratedJobApiPayload[]
+    }>('/api/generate/jobs')
+    return response.jobs.map((job) => mapGeneratedJob(job))
+  })
+
+  const bufferToDataUrl = (buffer: Buffer, contentType: string | null): string => {
+    const normalized = contentType?.split(';')[0]?.trim() || 'image/png'
+    return `data:${normalized};base64,${buffer.toString('base64')}`
+  }
+
   app.once('before-quit', () => {
     terminalSessions.killAll()
   })
@@ -431,6 +527,119 @@ export function registerIPCHandlers(
   ipcMain.handle(IPC_COMMANDS.AUTH_REFRESH_SESSION, async () => {
     return authService.initialize()
   })
+
+  ipcMain.handle(IPC_COMMANDS.BILLING_GET_STATE, async () => {
+    const response = await fetchAuthenticatedJson<{
+      provider: 'polar'
+      balance_credits: number
+      pending_checkouts: Array<{
+        checkout_id: string
+        pack_id: string
+        credits: number
+        status: string
+      }>
+      packs: Array<{
+        id: string
+        name: string
+        price_usd: string
+        credits: number
+        button_label: string
+        badge?: string | null
+        description: string
+      }>
+    }>('/api/billing/state')
+
+    return {
+      provider: response.provider,
+      balanceCredits: response.balance_credits,
+      pendingCheckouts: response.pending_checkouts.map((checkout) => ({
+        checkoutId: checkout.checkout_id,
+        packId: checkout.pack_id,
+        credits: checkout.credits,
+        status: checkout.status,
+      })),
+      packs: response.packs.map((pack) => ({
+        id: pack.id,
+        name: pack.name,
+        priceUsd: pack.price_usd,
+        credits: pack.credits,
+        buttonLabel: pack.button_label,
+        badge: pack.badge ?? null,
+        description: pack.description,
+      })),
+    } satisfies BillingState
+  })
+
+  ipcMain.handle(IPC_COMMANDS.BILLING_GET_CHECKOUT_STATUS, async (_, checkoutId: string) => {
+    const response = await fetchAuthenticatedJson<{
+      checkout_id: string
+      status: string
+      pack_id: string
+      credits: number
+      granted: boolean
+      balance_credits: number
+    }>(`/api/billing/checkouts/${checkoutId}`)
+
+    return {
+      checkoutId: response.checkout_id,
+      status: response.status,
+      packId: response.pack_id,
+      credits: response.credits,
+      granted: response.granted,
+      balanceCredits: response.balance_credits,
+    }
+  })
+
+  ipcMain.handle(
+    IPC_COMMANDS.BILLING_CREATE_CHECKOUT,
+    async (_, args: BillingCheckoutSessionRequest) => {
+      const redirectTargets = buildBillingCheckoutRedirectTargets({
+        isPackaged: app.isPackaged,
+        protocolScheme: options?.billingProtocolScheme ?? 'agito',
+      })
+
+      let pendingCheckout: Promise<unknown> | null = null
+      if (app.isPackaged && options?.billingDeepLinkCoordinator) {
+        pendingCheckout = options.billingDeepLinkCoordinator.waitForCheckout()
+        pendingCheckout
+          .then((payload) => {
+            broadcastToAll(IPC_EVENTS.BILLING_CHECKOUT_RETURNED, payload)
+          })
+          .catch((error) => {
+            console.error('[BILLING] Checkout callback failed', error)
+          })
+      }
+
+      try {
+        const checkout = await fetchAuthenticatedJson<{
+          provider: 'polar'
+          checkout_id: string
+          checkout_url: string
+        }>('/api/billing/checkout-session', {
+          method: 'POST',
+          body: JSON.stringify({
+            pack_id: args.packId,
+            success_url: args.successUrl ?? redirectTargets.successUrl,
+            cancel_url: args.cancelUrl ?? redirectTargets.cancelUrl,
+          }),
+        })
+        await shell.openExternal(checkout.checkout_url)
+        return {
+          provider: checkout.provider,
+          checkoutId: checkout.checkout_id,
+          checkoutUrl: checkout.checkout_url,
+        } satisfies BillingCheckoutSessionResponse
+      } catch (error) {
+        if (pendingCheckout && options?.billingDeepLinkCoordinator) {
+          options.billingDeepLinkCoordinator.rejectPending(
+            error instanceof Error ? error : new Error(String(error))
+          )
+        }
+        throw error
+      }
+    }
+  )
+
   ipcMain.handle(
     IPC_COMMANDS.CHARACTER_RUNTIME_SET_ATTENTION,
     (_, args: { characterId: string; attentionActive: boolean }) => {
@@ -982,85 +1191,91 @@ export function registerIPCHandlers(
     broadcastToAll(IPC_EVENTS.STORE_UPDATED, { key: 'settings' })
   })
 
-  // --- Asset Generation (via agito-server) ---
-
-  ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE, async (_, req: AssetGenerateRequest) => {
-    const baseUrl = publicConfig.apiUrl
-    await authReady
-    const authState: AuthSessionState = authService.getState()
-    if (!canAccessGenerate(authState.status)) {
-      return {
-        success: false,
-        error: 'Sign in to use Generate.',
-      }
-    }
-
-    const authSession = await credentialStore.getSession()
-    if (!authSession?.accessToken) {
-      return {
-        success: false,
-        error: 'Missing auth session. Sign in again to use Generate.',
-      }
-    }
-
+  ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE_JOB_SUBMIT, async (_, req: AssetGenerateRequest) => {
     try {
-      const res = await fetch(`${baseUrl}/api/generate`, {
+      const job = await fetchAuthenticatedJson<GeneratedJobApiPayload>('/api/generate/jobs', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authSession.accessToken}`,
-        },
         body: JSON.stringify(req),
-        signal: AbortSignal.timeout(300_000),
       })
-
-      if (!res.ok) {
-        const text = await res.text()
-        return { success: false, error: `Server error ${res.status}: ${text}` }
+      return mapGeneratedJob(job)
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        throw new Error(error.message)
       }
-
-      const result = await res.json() as {
-        success: boolean
-        results?: { success: boolean; image_base64?: string; filename?: string; error?: string }[]
-        error?: string
-        duration_ms?: number
-      }
-
-      console.log('[ASSET_GENERATE] Server response:', { success: result.success, resultCount: result.results?.length, error: result.error, duration_ms: result.duration_ms })
-
-      if (result.success && result.results) {
-        // Save each generated image to local assets
-        const destDir = join(store.getBasePath(), ASSETS_DIR, 'custom', req.category)
-        if (!existsSync(destDir)) {
-          mkdirSync(destDir, { recursive: true })
-        }
-
-        for (const item of result.results) {
-          if (item.success && item.image_base64 && item.filename) {
-            const buf = Buffer.from(item.image_base64, 'base64')
-            writeFileSync(join(destDir, item.filename), buf)
-          }
-        }
-
-        return {
-          success: true,
-          results: result.results.map((item) => ({
-            ...item,
-            relativePath: item.filename ? `custom/${req.category}/${item.filename}` : undefined,
-          })),
-          duration_ms: result.duration_ms,
-        }
-      }
-
-      return { success: false, error: result.error || 'Unknown error' }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED')) {
-        return { success: false, error: 'Cannot connect to agito-server. Is it running on ' + baseUrl + '?' }
-      }
-      return { success: false, error: msg }
+      throw error
     }
   })
+
+  ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE_JOB_LIST, async () => {
+    return await loadGeneratedJobs()
+  })
+
+  ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE_JOB_DETAIL, async (_, jobId: string) => {
+    const response = await fetchAuthenticatedJson<GeneratedJobApiPayload>(`/api/generate/jobs/${jobId}`)
+    return mapGeneratedJob(response)
+  })
+
+  ipcMain.handle(IPC_COMMANDS.ASSET_GENERATE_JOB_RECOVER, async (_, jobId: string) => {
+    const response = await fetchAuthenticatedJson<GeneratedJobApiPayload>(`/api/generate/jobs/${jobId}/recover`, { method: 'POST' })
+
+    return mapGeneratedJob(response)
+  })
+
+  ipcMain.handle(
+    IPC_COMMANDS.ASSET_GENERATE_JOB_GET_PREVIEW_URLS,
+    async (_, jobId: string): Promise<GenerateJobPreviewUrls> => {
+      const request = buildGeneratedJobPreviewUrlsRequest({ jobId })
+      const response = await fetchAuthenticatedJson<{
+        source_image_url?: string | null
+        reference_image_url?: string | null
+        results: Array<{ result_id: number; signed_url: string }>
+      }>(request.path)
+
+      return {
+        sourceImageUrl: response.source_image_url ?? null,
+        referenceImageUrl: response.reference_image_url ?? null,
+        results: response.results.map((result) => ({
+          resultId: result.result_id,
+          signedUrl: result.signed_url,
+        })),
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_COMMANDS.ASSET_GENERATE_JOB_SAVE_RESULT,
+    async (_, args: { category: AssetCategory; jobId: string; resultId: number; filename?: string | null }) => {
+      const accessToken = await getAccessToken()
+      const downloadRequest = buildGeneratedResultDownloadRequest({
+        category: args.category,
+        jobId: args.jobId,
+        resultId: args.resultId,
+      })
+
+      const download = await fetch(`${publicConfig.apiUrl}${downloadRequest.path}`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!download.ok) {
+        throw new Error(`Failed to download generated image: ${download.status}`)
+      }
+
+      const destDir = join(store.getBasePath(), ASSETS_DIR, 'custom', args.category)
+      if (!existsSync(destDir)) {
+        mkdirSync(destDir, { recursive: true })
+      }
+
+      const disposition = download.headers.get('content-disposition')
+      const dispositionFilename = disposition?.match(/filename=\"?([^"]+)\"?/)?.[1] ?? null
+      const filename = args.filename ?? dispositionFilename ?? `generated-result-${args.resultId}.png`
+      writeFileSync(join(destDir, filename), Buffer.from(await download.arrayBuffer()))
+      return {
+        relativePath: `custom/${args.category}/${filename}`,
+      } satisfies SaveGeneratedResultResponse
+    }
+  )
 
 }
 

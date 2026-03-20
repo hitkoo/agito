@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TerminalDockSyncState } from '../../../shared/types'
+import type { AssetCategory, TerminalDockSyncState } from '../../../shared/types'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import {
   createEmptyDockLayout,
@@ -9,6 +9,7 @@ import {
 
 export type AppTab = 'runtime' | 'layout' | 'generate' | 'characters' | 'settings'
 export type ThemeMode = 'system' | 'light' | 'dark'
+export type GenerateView = 'generator' | 'buy_credits'
 
 interface ContextMenuState {
   characterId: string
@@ -26,6 +27,8 @@ interface TerminalDockState {
 
 interface UIStore {
   activeTab: AppTab
+  generateView: GenerateView
+  preferredGenerateCategory: AssetCategory | null
   sidebarExpanded: boolean
   selectedCharacterId: string | null
   panelWidth: number
@@ -55,6 +58,9 @@ interface UIStore {
     | null
   theme: ThemeMode
   setActiveTab: (tab: AppTab) => void
+  openBuyCredits: () => void
+  openGenerateHome: (category?: AssetCategory) => void
+  consumePreferredGenerateCategory: () => void
   toggleSidebar: () => void
   selectCharacter: (id: string | null) => void
   setPanelWidth: (width: number) => void
@@ -80,6 +86,8 @@ const initialDockLayout = createEmptyDockLayout()
 
 export const useUIStore = create<UIStore>((set) => ({
   activeTab: 'runtime',
+  generateView: 'generator',
+  preferredGenerateCategory: null,
   sidebarExpanded: false,
   selectedCharacterId: null,
   panelWidth: 50,
@@ -98,7 +106,31 @@ export const useUIStore = create<UIStore>((set) => ({
   layoutContextMenu: null,
   layoutClipboard: null,
   theme: 'dark',
-  setActiveTab: (tab) => set({ activeTab: tab, contextMenu: null, selectedLayoutItem: null }),
+  setActiveTab: (tab) =>
+    set({
+      activeTab: tab,
+      generateView: 'generator',
+      preferredGenerateCategory: null,
+      contextMenu: null,
+      selectedLayoutItem: null,
+    }),
+  openBuyCredits: () =>
+    set({
+      activeTab: 'generate',
+      generateView: 'buy_credits',
+      preferredGenerateCategory: null,
+      contextMenu: null,
+      selectedLayoutItem: null,
+    }),
+  openGenerateHome: (category) =>
+    set({
+      activeTab: 'generate',
+      generateView: 'generator',
+      preferredGenerateCategory: category ?? null,
+      contextMenu: null,
+      selectedLayoutItem: null,
+    }),
+  consumePreferredGenerateCategory: () => set({ preferredGenerateCategory: null }),
   toggleSidebar: () => set((s) => ({ sidebarExpanded: !s.sidebarExpanded })),
   selectCharacter: (id) => set({ selectedCharacterId: id }),
   setPanelWidth: (width) => set({ panelWidth: Math.max(30, Math.min(70, width)) }),

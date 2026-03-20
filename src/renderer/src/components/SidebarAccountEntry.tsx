@@ -4,6 +4,8 @@ import { toast } from 'sonner'
 import { IPC_COMMANDS } from '../../../shared/ipc-channels'
 import { getAccountDisplayName } from '../../../shared/auth'
 import { useAuthStore } from '../stores/auth-store'
+import { useBillingStore } from '../stores/billing-store'
+import { useUIStore } from '../stores/ui-store'
 import { cn } from '../lib/utils'
 import { AccountPopover } from './AccountPopover'
 
@@ -15,6 +17,10 @@ export function SidebarAccountEntry(props: SidebarAccountEntryProps): JSX.Elemen
   const { expanded } = props
   const session = useAuthStore((s) => s.session)
   const openDialog = useAuthStore((s) => s.openDialog)
+  const balanceCredits = useBillingStore((s) => s.balanceCredits)
+  const billingLoading = useBillingStore((s) => s.loading)
+  const loadBilling = useBillingStore((s) => s.loadFromMain)
+  const openBuyCredits = useUIStore((s) => s.openBuyCredits)
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
 
@@ -62,6 +68,15 @@ export function SidebarAccountEntry(props: SidebarAccountEntryProps): JSX.Elemen
     }
   }
 
+  const handleRefreshCredits = async (): Promise<void> => {
+    try {
+      await loadBilling()
+      toast.success('Balance refreshed')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to refresh balance')
+    }
+  }
+
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -105,7 +120,16 @@ export function SidebarAccountEntry(props: SidebarAccountEntryProps): JSX.Elemen
               setOpen(false)
               openDialog('sign_up')
             }}
+            balanceCredits={balanceCredits}
+            onBuyCredits={() => {
+              setOpen(false)
+              openBuyCredits()
+            }}
+            onRefreshCredits={() => {
+              void handleRefreshCredits()
+            }}
             onSignOut={handleSignOut}
+            refreshingCredits={billingLoading}
           />
         </div>
       )}

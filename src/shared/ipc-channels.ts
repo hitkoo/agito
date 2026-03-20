@@ -4,8 +4,8 @@ export const IPC_EVENTS = {
   CHARACTER_STATUS: 'character:status',
   CHARACTER_RUNTIME: 'character:runtime',
   STORE_UPDATED: 'store:updated',
-  ASSET_GENERATE_PROGRESS: 'asset:generate-progress',
   AUTH_SESSION_CHANGED: 'auth:session-changed',
+  BILLING_CHECKOUT_RETURNED: 'billing:checkout-returned',
 } as const
 
 // Renderer -> Main commands (invoke)
@@ -55,7 +55,12 @@ export const IPC_COMMANDS = {
   ASSET_READ_BASE64: 'asset:read-base64',
 
   // Asset generation (via agito-server)
-  ASSET_GENERATE: 'asset:generate',
+  ASSET_GENERATE_JOB_SUBMIT: 'asset:generate-job-submit',
+  ASSET_GENERATE_JOB_LIST: 'asset:generate-job-list',
+  ASSET_GENERATE_JOB_DETAIL: 'asset:generate-job-detail',
+  ASSET_GENERATE_JOB_RECOVER: 'asset:generate-job-recover',
+  ASSET_GENERATE_JOB_GET_PREVIEW_URLS: 'asset:generate-job-get-preview-urls',
+  ASSET_GENERATE_JOB_SAVE_RESULT: 'asset:generate-job-save-result',
 
   // Settings
   SETTINGS_READ: 'settings:read',
@@ -69,6 +74,10 @@ export const IPC_COMMANDS = {
   AUTH_RESEND_SIGNUP_VERIFICATION: 'auth:resend-signup-verification',
   AUTH_SEND_PASSWORD_RESET: 'auth:send-password-reset',
   AUTH_REFRESH_SESSION: 'auth:refresh-session',
+  // Billing
+  BILLING_GET_STATE: 'billing:get-state',
+  BILLING_GET_CHECKOUT_STATUS: 'billing:get-checkout-status',
+  BILLING_CREATE_CHECKOUT: 'billing:create-checkout',
   // Terminal dock
   TERMINAL_DOCK_SHOW: 'terminal-dock:show',
   TERMINAL_DOCK_HIDE: 'terminal-dock:hide',

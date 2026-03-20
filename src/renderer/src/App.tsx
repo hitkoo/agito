@@ -5,6 +5,7 @@ import { useRuntimeStore } from './stores/runtime-store'
 import { useRoomStore } from './stores/room-store'
 import { useUIStore } from './stores/ui-store'
 import { useSettingsStore } from './stores/settings-store'
+import { useBillingStore } from './stores/billing-store'
 import { IPC_COMMANDS } from '../../shared/ipc-channels'
 
 /**
@@ -77,6 +78,8 @@ export default function App(): JSX.Element {
   const loadRuntime = useRuntimeStore((s) => s.loadFromMain)
   const loadRoom = useRoomStore((s) => s.loadFromMain)
   const loadSettings = useSettingsStore((s) => s.loadFromMain)
+  const loadBilling = useBillingStore((s) => s.loadFromMain)
+  const clearBilling = useBillingStore((s) => s.clear)
 
   useIPCSync()
   useTerminalDockSync()
@@ -87,12 +90,25 @@ export default function App(): JSX.Element {
   }, [])
 
   useEffect(() => {
-    loadAuth()
-    loadCharacters()
-    loadRuntime()
-    loadRoom()
-    loadSettings()
-  }, [loadAuth, loadCharacters, loadRoom, loadRuntime, loadSettings])
+    void (async () => {
+      try {
+        const session = await loadAuth()
+        if (session.status === 'signed_in') {
+          await loadBilling()
+        } else {
+          clearBilling()
+        }
+        await Promise.all([
+          loadCharacters(),
+          loadRuntime(),
+          loadRoom(),
+          loadSettings(),
+        ])
+      } catch (error) {
+        console.error('[APP] Failed to load initial state', error)
+      }
+    })()
+  }, [clearBilling, loadAuth, loadBilling, loadCharacters, loadRoom, loadRuntime, loadSettings])
 
   const setDraggingManifestId = useUIStore((s) => s.setDraggingManifestId)
 
