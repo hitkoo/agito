@@ -1051,7 +1051,7 @@ describe('CharacterRuntimeService', () => {
     service.stopSession('char-approval-startup')
   })
 
-  test('downgrades live running sessions to unknown after 60s of silence', async () => {
+  test('downgrades live running sessions to unknown after the stale-running threshold elapses', async () => {
     const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
     const transcriptDir = join(fakeHome, '.codex', 'sessions', '2026', '03', '20')
     mkdirSync(transcriptDir, { recursive: true })
@@ -1120,7 +1120,7 @@ describe('CharacterRuntimeService', () => {
     service.stopSession('char-stale-running')
   })
 
-  test('hydrates stale running sessions as unknown immediately on startup', () => {
+  test('hydrates stale running sessions as unknown immediately on startup once the stale-running threshold has already elapsed', () => {
     const fakeHome = mkdtempSync(join(tmpdir(), 'agito-runtime-home-'))
     const transcriptDir = join(fakeHome, '.codex', 'sessions', '2000', '01', '01')
     mkdirSync(transcriptDir, { recursive: true })

@@ -18,7 +18,7 @@ import {
 
 const DONE_AUTO_CLEAR_MS = 2000
 const TRANSCRIPT_POLL_MS = 500
-const STALE_RUNNING_THRESHOLD_MS = 60000
+const STALE_RUNNING_THRESHOLD_MS = 180000
 
 interface SemanticParser {
   ingestLine(line: string): void
