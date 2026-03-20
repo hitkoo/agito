@@ -162,14 +162,51 @@ export interface AssetGenerateRequest {
   view?: '3/4' | 'iso'
   source_image?: string | null
   reference_image?: string | null
-  template_id?: string | null
+  batch_count?: number
 }
 
-export interface AssetGenerateResult {
-  success: boolean
-  relativePath?: string
-  image_base64?: string
-  filename?: string
-  error?: string
-  duration_ms?: number
+export type GenerateJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'partial_success'
+
+export interface GenerateJobResultItem {
+  id: number
+  filename: string
+  storagePath: string
+  sortIndex: number
+  mimeType: string
+}
+
+export interface GenerateJobPreviewResultUrl {
+  resultId: number
+  signedUrl: string
+}
+
+export interface GenerateJobPreviewUrls {
+  sourceImageUrl?: string | null
+  referenceImageUrl?: string | null
+  results: GenerateJobPreviewResultUrl[]
+}
+
+export interface GenerateJob {
+  id: string
+  category: AssetCategory
+  prompt: string
+  status: GenerateJobStatus
+  reservedCredits: number
+  chargedCredits: number
+  uploadedCount: number
+  expectedCount: number
+  error?: string | null
+  storagePrefix?: string | null
+  originalPrompt?: string | null
+  hasSourceImage?: boolean
+  hasReferenceImage?: boolean
+  createdAt: string
+  startedAt?: string | null
+  completedAt?: string | null
+  leaseExpiresAt?: string | null
+  results: GenerateJobResultItem[]
+}
+
+export interface SaveGeneratedResultResponse {
+  relativePath: string
 }

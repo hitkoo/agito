@@ -4,11 +4,10 @@ import { useUIStore } from "../stores/ui-store";
 import { useCharacterStore } from "../stores/character-store";
 import { IPC_COMMANDS } from "../../../shared/ipc-channels";
 import { Button } from "./ui/button";
-import { GenerateDialog } from "./GenerateDialog";
 import { SkinPickerModal } from "./SkinPickerModal";
+import { getGenerateCategoryForItemPaletteTab } from "../lib/generate-entrypoint";
 import type {
   ItemCategory,
-  AssetCategory,
   AssetListEntry,
   Character,
 } from "../../../shared/types";
@@ -282,13 +281,13 @@ function CharacterPlacementCard({
 type PaletteTab = "background" | "furniture" | "skin";
 
 export function ItemPalette(): JSX.Element {
-  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
   const [activeTab, setActiveTab] = useState<PaletteTab>("furniture");
   const [allSprites, setAllSprites] = useState<SpriteEntry[]>([]);
   const [spriteDataUrls, setSpriteDataUrls] = useState<Map<string, string>>(
     new Map(),
   );
   const [loading, setLoading] = useState(true);
+  const openGenerateHome = useUIStore((s) => s.openGenerateHome);
 
   // Load all sprites from the asset folder scan
   const loadSprites = useCallback(async () => {
@@ -441,7 +440,7 @@ export function ItemPalette(): JSX.Element {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowGenerateDialog(true)}
+            onClick={() => openGenerateHome(getGenerateCategoryForItemPaletteTab(activeTab))}
           >
             <Sparkles className="h-3 w-3 mr-1" />
             AI
@@ -481,19 +480,6 @@ export function ItemPalette(): JSX.Element {
           </>
         )}
       </div>
-
-      {showGenerateDialog && (
-        <GenerateDialog
-          defaultCategory={
-            (activeTab === "skin" ? "furniture" : activeTab) as AssetCategory
-          }
-          onClose={() => setShowGenerateDialog(false)}
-          onGenerated={() => {
-            setShowGenerateDialog(false);
-            loadSprites();
-          }}
-        />
-      )}
     </div>
   );
 }

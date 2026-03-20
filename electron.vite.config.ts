@@ -6,6 +6,7 @@ import { normalizePublicConfig } from './src/shared/public-config'
 export default defineConfig(({ mode }) => {
   const worktreeRoot = process.cwd()
   const repoRoot = resolve(worktreeRoot, '../..')
+  const rendererPort = Number(process.env.AGITO_RENDERER_PORT || '5173')
   const repoEnv = loadEnv(mode, repoRoot, 'AGITO_PUBLIC_')
   const worktreeEnv = loadEnv(mode, worktreeRoot, 'AGITO_PUBLIC_')
   const publicConfig = normalizePublicConfig({
@@ -46,6 +47,11 @@ export default defineConfig(({ mode }) => {
       define: definePublicConfig,
     },
     renderer: {
+      server: {
+        host: '127.0.0.1',
+        port: rendererPort,
+        strictPort: true,
+      },
       resolve: {
         alias: {
           '@renderer': resolve('src/renderer/src'),

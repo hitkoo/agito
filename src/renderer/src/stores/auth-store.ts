@@ -12,7 +12,7 @@ const SIGNED_OUT_STATE: AuthSessionState = {
 interface AuthStore {
   session: AuthSessionState
   dialogMode: AuthDialogMode | null
-  loadFromMain: () => Promise<void>
+  loadFromMain: () => Promise<AuthSessionState>
   setSession: (session: AuthSessionState) => void
   openDialog: (mode: AuthDialogMode) => void
   closeDialog: () => void
@@ -25,6 +25,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
   loadFromMain: async () => {
     const session = await window.api.invoke<AuthSessionState>(IPC_COMMANDS.AUTH_GET_SESSION)
     set({ session })
+    return session
   },
 
   setSession: (session) => set({ session }),

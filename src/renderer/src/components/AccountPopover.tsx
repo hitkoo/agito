@@ -1,12 +1,17 @@
-import { Mail, LogOut } from 'lucide-react'
+import { Mail, LogOut, RefreshCcw } from 'lucide-react'
 import { Button } from './ui/button'
 import { getAccountDisplayName, type AuthSessionState } from '../../../shared/auth'
+import { GitoTokenIcon } from './GitoTokenIcon'
 
 interface AccountPopoverProps {
   session: AuthSessionState
+  balanceCredits: number
   onSignIn: () => void
   onSignUp: () => void
+  onBuyCredits: () => void
+  onRefreshCredits: () => void
   onSignOut: () => void
+  refreshingCredits?: boolean
 }
 
 function getInitials(name: string): string {
@@ -14,7 +19,7 @@ function getInitials(name: string): string {
 }
 
 export function AccountPopover(props: AccountPopoverProps): JSX.Element {
-  const { session, onSignIn, onSignUp, onSignOut } = props
+  const { session, balanceCredits, onSignIn, onSignUp, onBuyCredits, onRefreshCredits, onSignOut, refreshingCredits = false } = props
   const profile = session.profile
 
   if (!profile) {
@@ -72,9 +77,31 @@ export function AccountPopover(props: AccountPopoverProps): JSX.Element {
           <Mail className="h-3.5 w-3.5" />
           <span>{profile.provider === 'google' ? 'Signed in with Google' : 'Email login'}</span>
         </div>
+        <div className="flex items-center justify-between rounded-md bg-background/70 px-2.5 py-2">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <GitoTokenIcon size={14} className="h-3.5 w-3.5" />
+            <span>Credits</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-sm font-semibold">{balanceCredits.toLocaleString()}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={onRefreshCredits}
+              disabled={refreshingCredits}
+              title="Refresh balance"
+            >
+              <RefreshCcw className="h-3 w-3" />
+            </Button>
+          </div>
+        </div>
       </div>
 
-      <Button className="mt-4 w-full" variant="outline" onClick={onSignOut}>
+      <Button className="mt-4 w-full" onClick={onBuyCredits}>
+        Buy credits
+      </Button>
+      <Button className="mt-2 w-full" variant="outline" onClick={onSignOut}>
         <LogOut className="mr-2 h-4 w-4" />
         Log out
       </Button>
