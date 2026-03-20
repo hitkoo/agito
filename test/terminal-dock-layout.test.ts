@@ -5,6 +5,7 @@ import {
   createEmptyDockLayout,
   ensureCharacterSurface,
   findCharacterSurface,
+  focusDockPane,
   getActiveCharacterId,
   getPaneById,
   listOpenCharacterIds,
@@ -158,6 +159,28 @@ describe('activatePaneSurface', () => {
 
     expect(expectPane(layout, pane.id).activeSurfaceId).toBe(firstSurfaceId)
     expect(getActiveCharacterId(layout)).toBe('char-1')
+  })
+})
+
+describe('focusDockPane', () => {
+  test('returns the same layout when the pane is already focused', () => {
+    const layout = createEmptyDockLayout()
+
+    expect(focusDockPane(layout, layout.focusedPaneId)).toBe(layout)
+  })
+
+  test('focuses a different pane without changing the pane tree', () => {
+    let layout = ensureCharacterSurface(createEmptyDockLayout(), 'char-1')
+    const firstPaneId = layout.focusedPaneId
+    layout = splitDockPane(layout, firstPaneId, 'horizontal')
+    const secondPaneId = layout.focusedPaneId
+
+    const next = focusDockPane(layout, firstPaneId)
+
+    expect(next).not.toBe(layout)
+    expect(next.focusedPaneId).toBe(firstPaneId)
+    expect(listPaneCharacterIds(next)).toEqual(listPaneCharacterIds(layout))
+    expect(getPaneById(next, secondPaneId)).not.toBeNull()
   })
 })
 

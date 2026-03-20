@@ -1,52 +1,58 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  clampMinimizedDockHeight,
+  clampTerminalDockBarHeight,
   getFittedMinimizedDockWidth,
-  getResizedMinimizedDockHeight,
-  resolveMinimizedDockHeight,
-} from '../src/shared/terminal-dock-minimized'
-import { getAnchoredDockBounds } from '../src/shared/terminal-dock-bar'
+  getResizedTerminalDockBarHeight,
+  resolveTerminalDockBarHeight,
+} from '../src/shared/terminal-dock-bar'
+import {
+  FLOAT_TERMINAL_DOCK_GAP,
+  getAnchoredDockBounds,
+  getFloatBarCharacterCount,
+  getFloatBarBoundsFromTerminalBounds,
+  getFloatTerminalBoundsFromBarBounds,
+} from '../src/shared/terminal-dock-bar'
 
-describe('resolveMinimizedDockHeight', () => {
+describe('resolveTerminalDockBarHeight', () => {
   test('falls back to the default height when no saved value exists', () => {
-    expect(resolveMinimizedDockHeight(null)).toBe(40)
-    expect(resolveMinimizedDockHeight(undefined)).toBe(40)
-    expect(resolveMinimizedDockHeight('')).toBe(40)
-    expect(resolveMinimizedDockHeight('NaN')).toBe(40)
+    expect(resolveTerminalDockBarHeight(null)).toBe(40)
+    expect(resolveTerminalDockBarHeight(undefined)).toBe(40)
+    expect(resolveTerminalDockBarHeight('')).toBe(40)
+    expect(resolveTerminalDockBarHeight('NaN')).toBe(40)
   })
 
   test('clamps saved values into the supported range', () => {
-    expect(resolveMinimizedDockHeight('24')).toBe(40)
-    expect(resolveMinimizedDockHeight('72')).toBe(72)
-    expect(resolveMinimizedDockHeight('200')).toBe(128)
+    expect(resolveTerminalDockBarHeight('24')).toBe(40)
+    expect(resolveTerminalDockBarHeight('72')).toBe(72)
+    expect(resolveTerminalDockBarHeight('200')).toBe(128)
   })
 })
 
-describe('clampMinimizedDockHeight', () => {
+describe('clampTerminalDockBarHeight', () => {
   test('keeps the float dock between 40px and 128px tall', () => {
-    expect(clampMinimizedDockHeight(24)).toBe(40)
-    expect(clampMinimizedDockHeight(80)).toBe(80)
-    expect(clampMinimizedDockHeight(999)).toBe(128)
+    expect(clampTerminalDockBarHeight(24)).toBe(40)
+    expect(clampTerminalDockBarHeight(80)).toBe(80)
+    expect(clampTerminalDockBarHeight(999)).toBe(128)
   })
 })
 
-describe('getResizedMinimizedDockHeight', () => {
+describe('getResizedTerminalDockBarHeight', () => {
   test('grows upward and shrinks downward within the clamp range', () => {
-    expect(getResizedMinimizedDockHeight(40, -24)).toBe(64)
-    expect(getResizedMinimizedDockHeight(40, 4)).toBe(40)
-    expect(getResizedMinimizedDockHeight(40, 20)).toBe(40)
+    expect(getResizedTerminalDockBarHeight(40, -24)).toBe(64)
+    expect(getResizedTerminalDockBarHeight(40, 4)).toBe(40)
+    expect(getResizedTerminalDockBarHeight(40, 20)).toBe(40)
   })
 })
 
 describe('getFittedMinimizedDockWidth', () => {
-  test('fits the float dock width to character count and current height', () => {
+  test('fits the float dock width to the centered home|characters|grab cluster', () => {
     expect(
       getFittedMinimizedDockWidth({
         characterCount: 3,
         height: 40,
         maxWidth: 999,
       }),
-    ).toBe(156)
+    ).toBe(192)
   })
 
   test('clamps the fitted width to the available screen width', () => {
@@ -57,6 +63,26 @@ describe('getFittedMinimizedDockWidth', () => {
         maxWidth: 320,
       }),
     ).toBe(320)
+  })
+})
+
+describe('getFloatBarCharacterCount', () => {
+  test('always uses the total character count when at least one pane is open', () => {
+    expect(
+      getFloatBarCharacterCount({
+        openCharacterCount: 3,
+        totalCharacterCount: 5,
+      }),
+    ).toBe(5)
+  })
+
+  test('falls back to the total character count when nothing is open', () => {
+    expect(
+      getFloatBarCharacterCount({
+        openCharacterCount: 0,
+        totalCharacterCount: 5,
+      }),
+    ).toBe(5)
   })
 })
 
@@ -107,5 +133,43 @@ describe('getAnchoredDockBounds', () => {
       width: 400,
       height: 300,
     })
+  })
+})
+
+describe('float pair bounds helpers', () => {
+  test('positions the float bar below the large terminal with a fixed gap', () => {
+    expect(
+      getFloatBarBoundsFromTerminalBounds({
+        terminalBounds: { x: 100, y: 200, width: 400, height: 300 },
+        barHeight: 40,
+        characterCount: 3,
+        workArea: { x: 0, y: 0, width: 1440, height: 900 },
+      }),
+    ).toEqual({
+      x: 204,
+      y: 512,
+      width: 192,
+      height: 40,
+    })
+  })
+
+  test('reconstructs the large terminal above the bar with the shared gap', () => {
+    expect(
+      getFloatTerminalBoundsFromBarBounds({
+        barBounds: { x: 204, y: 512, width: 192, height: 40 },
+        terminalWidth: 400,
+        terminalHeight: 300,
+        workArea: { x: 0, y: 0, width: 1440, height: 900 },
+      }),
+    ).toEqual({
+      x: 100,
+      y: 200,
+      width: 400,
+      height: 300,
+    })
+  })
+
+  test('documents the fixed float pair gap', () => {
+    expect(FLOAT_TERMINAL_DOCK_GAP).toBe(12)
   })
 })

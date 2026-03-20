@@ -124,6 +124,7 @@ export interface AgitoPersistentData {
 
 export interface AgitoSettings {
   defaultSpriteSize: number
+  skipPermissionPrompts: boolean
   terminalFontFamilies: string[]
   terminalFontSize: number
 }
@@ -131,8 +132,9 @@ export interface AgitoSettings {
 // --- Terminal Dock ---
 
 export interface TerminalDockSyncState {
-  visible: boolean
-  minimized: boolean
+  floatMode: boolean
+  terminalVisible: boolean
+  barVisible: boolean
   focusedPaneId: string
   activeCharacterId: string | null
   layout: DockLayout

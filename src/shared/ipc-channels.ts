@@ -78,14 +78,15 @@ export const IPC_COMMANDS = {
   BILLING_GET_STATE: 'billing:get-state',
   BILLING_GET_CHECKOUT_STATUS: 'billing:get-checkout-status',
   BILLING_CREATE_CHECKOUT: 'billing:create-checkout',
+  // Window
+  MAIN_WINDOW_SHOW: 'window:show-main',
   // Terminal dock
   TERMINAL_DOCK_SHOW: 'terminal-dock:show',
   TERMINAL_DOCK_HIDE: 'terminal-dock:hide',
-  TERMINAL_DOCK_MINIMIZE: 'terminal-dock:minimize',
-  TERMINAL_DOCK_RESTORE: 'terminal-dock:restore',
   TERMINAL_DOCK_GET_STATE: 'terminal-dock:get-state',
   TERMINAL_DOCK_SET_LAYOUT: 'terminal-dock:set-layout',
-  TERMINAL_DOCK_SET_MINIMIZED_HEIGHT: 'terminal-dock:set-minimized-height',
+  TERMINAL_DOCK_SET_FLOAT_MODE: 'terminal-dock:set-float-mode',
+  TERMINAL_DOCK_SET_BAR_HEIGHT: 'terminal-dock:set-bar-height',
 } as const
 
 // Terminal dock sync event (Main → Renderer)

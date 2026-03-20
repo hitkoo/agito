@@ -44,6 +44,7 @@ export const TERMINAL_FONT_FAMILY_OPTIONS = [
 export const TERMINAL_FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16] as const
 export const DEFAULT_SETTINGS = {
   defaultSpriteSize: 64,
+  skipPermissionPrompts: false,
   terminalFontFamilies: [...TERMINAL_FONT_FAMILY_OPTIONS],
   terminalFontSize: 13,
 } as const

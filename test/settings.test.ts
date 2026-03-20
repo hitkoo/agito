@@ -18,6 +18,7 @@ describe('resolveAgitoSettings', () => {
       }),
     ).toEqual({
       defaultSpriteSize: 96,
+      skipPermissionPrompts: false,
       terminalFontFamilies: [...TERMINAL_FONT_FAMILY_OPTIONS],
       terminalFontSize: 13,
     })
@@ -27,10 +28,13 @@ describe('resolveAgitoSettings', () => {
     expect(
       resolveAgitoSettings({
         defaultSpriteSize: 64,
+        skipPermissionPrompts: true,
         terminalFontFamilies: ['JetBrains Mono', 'Commit Mono', 'JetBrains Mono', 'unknown', 'SF Mono'],
         terminalFontSize: 12,
-      }).terminalFontFamilies,
-    ).toEqual([
+      }),
+    ).toMatchObject({
+      skipPermissionPrompts: true,
+      terminalFontFamilies: [
       'JetBrains Mono',
       'SF Mono',
       'Hack',
@@ -38,7 +42,8 @@ describe('resolveAgitoSettings', () => {
       'Monaspace Neon',
       'Maple Mono',
       'monospace',
-    ])
+      ],
+    })
   })
 })
 

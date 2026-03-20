@@ -18,8 +18,9 @@ interface ContextMenuState {
 }
 
 interface TerminalDockState {
-  visible: boolean
-  minimized: boolean
+  floatMode: boolean
+  terminalVisible: boolean
+  barVisible: boolean
   focusedPaneId: string
   activeCharacterId: string | null
   layout: DockLayout
@@ -73,10 +74,10 @@ interface UIStore {
   closeLayoutContextMenu: () => void
   setLayoutClipboard: (item: UIStore['layoutClipboard']) => void
   setTheme: (theme: ThemeMode) => void
+  showMainDock: () => void
   openTerminalDock: (characterId: string) => void
   closeTerminalDock: () => void
-  minimizeTerminalDock: (height?: number) => void
-  restoreTerminalDock: () => void
+  setTerminalDockFloatMode: (enabled: boolean) => void
   setTerminalDockLayout: (layout: DockLayout) => void
   syncTerminalDock: (state: TerminalDockSyncState) => void
   bumpTerminalRefreshKey: (characterId: string) => void
@@ -93,8 +94,9 @@ export const useUIStore = create<UIStore>((set) => ({
   panelWidth: 50,
   contextMenu: null,
   terminalDock: {
-    visible: false,
-    minimized: false,
+    floatMode: false,
+    terminalVisible: false,
+    barVisible: false,
     focusedPaneId: initialDockLayout.focusedPaneId,
     activeCharacterId: null,
     layout: initialDockLayout,
@@ -143,17 +145,17 @@ export const useUIStore = create<UIStore>((set) => ({
   closeLayoutContextMenu: () => set({ layoutContextMenu: null }),
   setLayoutClipboard: (item) => set({ layoutClipboard: item }),
   setTheme: (theme) => set({ theme }),
+  showMainDock: () => {
+    void window.api.invoke(IPC_COMMANDS.MAIN_WINDOW_SHOW)
+  },
   openTerminalDock: (characterId) => {
     void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_SHOW, { characterId })
   },
   closeTerminalDock: () => {
     void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_HIDE)
   },
-  minimizeTerminalDock: (height) => {
-    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_MINIMIZE, height ? { height } : undefined)
-  },
-  restoreTerminalDock: () => {
-    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_RESTORE)
+  setTerminalDockFloatMode: (enabled) => {
+    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_SET_FLOAT_MODE, { enabled })
   },
   setTerminalDockLayout: (layout) =>
     set((s) => {
@@ -176,8 +178,9 @@ export const useUIStore = create<UIStore>((set) => ({
     set((s) => ({
       terminalDock: {
         ...s.terminalDock,
-        visible: state.visible,
-        minimized: state.minimized,
+        floatMode: state.floatMode,
+        terminalVisible: state.terminalVisible,
+        barVisible: state.barVisible,
         focusedPaneId: state.focusedPaneId,
         activeCharacterId: state.activeCharacterId,
         layout: state.layout,

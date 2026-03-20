@@ -7,6 +7,7 @@ interface SettingsStore {
   settings: AgitoSettings
   loadFromMain: () => Promise<void>
   saveSettings: (settings: AgitoSettings) => Promise<void>
+  setSkipPermissionPrompts: (enabled: boolean) => Promise<void>
   setTerminalFontSize: (size: number) => Promise<void>
   setTerminalFontFamilies: (families: string[]) => Promise<void>
 }
@@ -23,6 +24,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   saveSettings: async (settings) => {
     const nextSettings = resolveAgitoSettings(settings)
+    set({ settings: nextSettings })
+    await window.api.invoke(IPC_COMMANDS.SETTINGS_WRITE, nextSettings)
+  },
+
+  setSkipPermissionPrompts: async (enabled) => {
+    const nextSettings = resolveAgitoSettings({
+      ...get().settings,
+      skipPermissionPrompts: enabled,
+    })
     set({ settings: nextSettings })
     await window.api.invoke(IPC_COMMANDS.SETTINGS_WRITE, nextSettings)
   },

@@ -7,12 +7,17 @@ import { useSettingsStore } from './stores/settings-store'
 import { useUIStore } from './stores/ui-store'
 import { TerminalDock } from './panel/TerminalDock'
 import { Toaster } from 'sonner'
+import type { TerminalDockWindowRole } from '../../shared/terminal-dock-state'
 
 /**
  * Detached terminal dock window — renders only the TerminalDock component
  * in a frameless, standalone BrowserWindow.
  */
-export function TerminalDockApp(): JSX.Element {
+export function TerminalDockApp({
+  windowRole,
+}: {
+  windowRole: TerminalDockWindowRole
+}): JSX.Element {
   const loadCharacters = useCharacterStore((s) => s.loadFromMain)
   const loadSettings = useSettingsStore((s) => s.loadFromMain)
   const syncTerminalDock = useUIStore((s) => s.syncTerminalDock)
@@ -43,7 +48,7 @@ export function TerminalDockApp(): JSX.Element {
     <div className="flex flex-col h-full w-full bg-background text-foreground">
       <Toaster position="top-center" richColors theme="dark" />
       <div className="flex-1 relative overflow-hidden">
-        <TerminalDock />
+        <TerminalDock windowRole={windowRole} />
       </div>
     </div>
   )

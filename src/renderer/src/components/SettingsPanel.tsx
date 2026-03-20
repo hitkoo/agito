@@ -42,6 +42,7 @@ export function SettingsPanel(): JSX.Element {
   const gridCols = useRoomStore((s) => s.gridCols)
   const gridRows = useRoomStore((s) => s.gridRows)
   const settings = useSettingsStore((s) => s.settings)
+  const setSkipPermissionPrompts = useSettingsStore((s) => s.setSkipPermissionPrompts)
   const setTerminalFontSize = useSettingsStore((s) => s.setTerminalFontSize)
   const setTerminalFontFamilies = useSettingsStore((s) => s.setTerminalFontFamilies)
   const [draggingFamily, setDraggingFamily] = useState<string | null>(null)
@@ -132,6 +133,32 @@ export function SettingsPanel(): JSX.Element {
           <div className="rounded-md border border-border bg-muted/30 px-3 py-2">
             <p className="text-sm font-mono text-muted-foreground">~/{AGITO_DIR_NAME}/</p>
           </div>
+        </section>
+
+        <section className="space-y-2">
+          <Label className="text-base font-semibold">Permission Prompts</Label>
+          <label className="flex items-start gap-3 rounded-md border border-border bg-muted/20 px-3 py-3 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-primary"
+              checked={settings.skipPermissionPrompts}
+              onChange={(event) => {
+                void setSkipPermissionPrompts(event.target.checked)
+              }}
+            />
+            <div className="space-y-1">
+              <div className="font-medium text-foreground">Skip permission prompts</div>
+              <p className="text-xs text-muted-foreground">
+                When enabled, Claude Code launches with
+                {' '}
+                <code>--dangerously-skip-permissions</code>
+                {' '}
+                and Codex launches with
+                {' '}
+                <code>--yolo</code>.
+              </p>
+            </div>
+          </label>
         </section>
 
         {/* Theme */}

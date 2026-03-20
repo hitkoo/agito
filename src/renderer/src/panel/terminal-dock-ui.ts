@@ -1,4 +1,5 @@
 import type { Character } from '../../../shared/types'
+import type { TerminalDockRenderMode } from '../../../shared/terminal-dock-state'
 import {
   TERMINAL_DOCK_BAR_DEFAULT_HEIGHT,
   TERMINAL_DOCK_BAR_HEIGHT_STORAGE_KEY,
@@ -19,6 +20,13 @@ import {
 export type CharacterDockPresence = 'focused-active' | 'open' | 'closed'
 export type GlobalCharacterSessionAction = 'assign' | 'reassign' | 'unassign'
 export type CharacterStatusIndicator = 'spinner' | 'dot'
+export interface TerminalDockFooterLayout {
+  visible: boolean
+  showHome: boolean
+  showCharacters: boolean
+  showFloatToggle: boolean
+  showGrab: boolean
+}
 export const TERMINAL_DOCK_FOOTER_HEIGHT_STORAGE_KEY = TERMINAL_DOCK_BAR_HEIGHT_STORAGE_KEY
 export const TERMINAL_DOCK_FOOTER_DEFAULT_HEIGHT = TERMINAL_DOCK_BAR_DEFAULT_HEIGHT
 export const TERMINAL_DOCK_FOOTER_MIN_HEIGHT = TERMINAL_DOCK_BAR_MIN_HEIGHT
@@ -60,6 +68,48 @@ export function getMinimizedCharacters(
 ): Character[] {
   const openCharacters = getOpenCharactersInGlobalOrder(characters, layout)
   return openCharacters.length > 0 ? openCharacters : characters
+}
+
+export function getTerminalDockFooterLayout(
+  renderMode: TerminalDockRenderMode
+): TerminalDockFooterLayout {
+  if (renderMode === 'dock') {
+    return {
+      visible: true,
+      showHome: true,
+      showCharacters: true,
+      showFloatToggle: true,
+      showGrab: false,
+    }
+  }
+
+  if (renderMode === 'float-terminal') {
+    return {
+      visible: true,
+      showHome: false,
+      showCharacters: false,
+      showFloatToggle: true,
+      showGrab: false,
+    }
+  }
+
+  if (renderMode === 'float-bar') {
+    return {
+      visible: true,
+      showHome: true,
+      showCharacters: true,
+      showFloatToggle: false,
+      showGrab: true,
+    }
+  }
+
+  return {
+    visible: false,
+    showHome: false,
+    showCharacters: false,
+    showFloatToggle: false,
+    showGrab: false,
+  }
 }
 
 export function getCharacterDockPresence(

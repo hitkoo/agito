@@ -216,6 +216,15 @@ export function getActiveCharacterId(layout: DockLayout): string | null {
   return pane.surfaces.find((surface) => surface.id === pane.activeSurfaceId)?.characterId ?? null
 }
 
+export function focusDockPane(layout: DockLayout, paneId: string): DockLayout {
+  if (layout.focusedPaneId === paneId) return layout
+
+  return {
+    ...cloneLayout(layout),
+    focusedPaneId: paneId,
+  }
+}
+
 export function ensureCharacterSurface(layout: DockLayout, characterId: string): DockLayout {
   const next = cloneLayout(layout)
   const existing = findSurfaceInNode(next.root, characterId)

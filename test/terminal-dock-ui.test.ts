@@ -12,6 +12,7 @@ import {
   getCharacterDockPresence,
   getCharacterSessionMenuActions,
   getClosedCharacters,
+  getTerminalDockFooterLayout,
   getMinimizedCharacters,
   getOpenCharactersInGlobalOrder,
   getCharacterStatusIndicator,
@@ -83,6 +84,48 @@ describe('getMinimizedCharacters', () => {
       'char-1',
       'char-3',
     ])
+  })
+})
+
+describe('getTerminalDockFooterLayout', () => {
+  test('shows home, character tabs, and float toggle in dock mode', () => {
+    expect(getTerminalDockFooterLayout('dock')).toEqual({
+      visible: true,
+      showHome: true,
+      showCharacters: true,
+      showFloatToggle: true,
+      showGrab: false,
+    })
+  })
+
+  test('shows only the float toggle in float-terminal mode', () => {
+    expect(getTerminalDockFooterLayout('float-terminal')).toEqual({
+      visible: true,
+      showHome: false,
+      showCharacters: false,
+      showFloatToggle: true,
+      showGrab: false,
+    })
+  })
+
+  test('shows home, characters, and grab in float-bar mode', () => {
+    expect(getTerminalDockFooterLayout('float-bar')).toEqual({
+      visible: true,
+      showHome: true,
+      showCharacters: true,
+      showFloatToggle: false,
+      showGrab: true,
+    })
+  })
+
+  test('hides the footer only for hidden mode', () => {
+    expect(getTerminalDockFooterLayout('hidden')).toEqual({
+      visible: false,
+      showHome: false,
+      showCharacters: false,
+      showFloatToggle: false,
+      showGrab: false,
+    })
   })
 })
 

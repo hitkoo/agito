@@ -83,6 +83,10 @@ export function resolveAgitoSettings(settings: Partial<AgitoSettings> | null | u
       typeof settings?.defaultSpriteSize === 'number'
         ? settings.defaultSpriteSize
         : DEFAULT_SETTINGS.defaultSpriteSize,
+    skipPermissionPrompts:
+      typeof settings?.skipPermissionPrompts === 'boolean'
+        ? settings.skipPermissionPrompts
+        : DEFAULT_SETTINGS.skipPermissionPrompts,
     terminalFontFamilies: normalizeTerminalFontFamilies(settings?.terminalFontFamilies),
     terminalFontSize: clampTerminalFontSize(
       typeof settings?.terminalFontSize === 'number'

@@ -10,8 +10,9 @@ import {
 import {
   ArrowUpDown,
   EllipsisVertical,
+  House,
   LoaderCircle,
-  Minus,
+  PictureInPicture2,
   Plus,
   RefreshCcw,
   RefreshCw,
@@ -34,6 +35,7 @@ import {
   activatePaneSurface,
   closeDockSurface,
   ensureCharacterSurface,
+  focusDockPane,
   listOpenCharacterIds,
   moveSurfaceToPane,
   removeDockPane,
@@ -49,6 +51,7 @@ import {
   getTerminalDockRenderMode,
   resolveSessionResumeEngine,
   shouldRenderAssignedTerminal,
+  type TerminalDockWindowRole,
 } from "../../../shared/terminal-dock-state";
 import { getCharacterMarkerStatus } from "../../../shared/character-runtime-state";
 import { TerminalView } from "./TerminalView";
@@ -58,7 +61,6 @@ import {
 } from "./terminal-dock-scroll";
 import {
   getResizedTerminalDockBarHeight,
-  getTerminalDockBarSideSlotWidth,
   resolveTerminalDockBarHeight,
   TERMINAL_DOCK_BAR_HEIGHT_STORAGE_KEY,
 } from "../../../shared/terminal-dock-bar";
@@ -66,8 +68,8 @@ import {
   getCharacterStatusBadgeState,
   getCharacterDockPresence,
   getClosedCharacters,
+  getTerminalDockFooterLayout,
   getCharacterSessionMenuActions,
-  getMinimizedCharacters,
   getSurfaceDropInsertIndex,
   getSurfaceReorderIndexFromDropTarget,
   getLayoutForGlobalCharacterSessionAction,
@@ -160,10 +162,7 @@ function cloneLayoutWithFocusedPane(
   layout: DockLayout,
   paneId: string,
 ): DockLayout {
-  return {
-    ...structuredClone(layout),
-    focusedPaneId: paneId,
-  };
+  return focusDockPane(layout, paneId);
 }
 
 function OverlayScrollStrip({
@@ -292,11 +291,16 @@ function OverlayScrollStrip({
   );
 }
 
-export function TerminalDock(): ReactElement | null {
+export function TerminalDock({
+  windowRole,
+}: {
+  windowRole: TerminalDockWindowRole;
+}): ReactElement | null {
   const dock = useUIStore((s) => s.terminalDock);
   const closeTerminalDock = useUIStore((s) => s.closeTerminalDock);
-  const minimizeTerminalDock = useUIStore((s) => s.minimizeTerminalDock);
-  const restoreTerminalDock = useUIStore((s) => s.restoreTerminalDock);
+  const openTerminalDock = useUIStore((s) => s.openTerminalDock);
+  const showMainDock = useUIStore((s) => s.showMainDock);
+  const setTerminalDockFloatMode = useUIStore((s) => s.setTerminalDockFloatMode);
   const setTerminalDockLayout = useUIStore((s) => s.setTerminalDockLayout);
   const refreshKeys = useUIStore((s) => s.terminalRefreshKey);
   const bumpTerminalRefreshKey = useUIStore((s) => s.bumpTerminalRefreshKey);
@@ -308,9 +312,12 @@ export function TerminalDock(): ReactElement | null {
     [characters],
   );
   const renderMode = getTerminalDockRenderMode({
-    visible: dock.visible,
-    minimized: dock.minimized,
+    role: windowRole,
+    floatMode: dock.floatMode,
+    terminalVisible: dock.terminalVisible,
+    barVisible: dock.barVisible,
   });
+  const footerLayout = getTerminalDockFooterLayout(renderMode);
   const [dropTarget, setDropTarget] = useState<SurfaceDropTarget>(null);
   const [draggedSurface, setDraggedSurface] =
     useState<SurfaceDragPayload | null>(null);
@@ -320,10 +327,6 @@ export function TerminalDock(): ReactElement | null {
         ? null
         : window.localStorage.getItem(TERMINAL_DOCK_BAR_HEIGHT_STORAGE_KEY),
     ),
-  );
-  const barSideSlotWidth = useMemo(
-    () => getTerminalDockBarSideSlotWidth(barHeight),
-    [barHeight],
   );
   const footerResizeRef = useRef<{ startY: number; startHeight: number } | null>(
     null,
@@ -340,7 +343,7 @@ export function TerminalDock(): ReactElement | null {
       TERMINAL_DOCK_BAR_HEIGHT_STORAGE_KEY,
       String(barHeight),
     );
-    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_SET_MINIMIZED_HEIGHT, {
+    void window.api.invoke(IPC_COMMANDS.TERMINAL_DOCK_SET_BAR_HEIGHT, {
       height: barHeight,
     });
   }, [barHeight]);
@@ -387,11 +390,6 @@ export function TerminalDock(): ReactElement | null {
     if (renderMode === "hidden") return;
 
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        minimizeTerminalDock(barHeight);
-        return;
-      }
-
       if (event.metaKey && !event.shiftKey && event.key === "\\") {
         event.preventDefault();
         setTerminalDockLayout(
@@ -413,14 +411,12 @@ export function TerminalDock(): ReactElement | null {
   }, [
     dock.focusedPaneId,
     dock.layout,
-    barHeight,
-    minimizeTerminalDock,
     renderMode,
     setTerminalDockLayout,
   ]);
 
   useEffect(() => {
-    if (renderMode !== "dock") return;
+    if (renderMode !== "dock" && renderMode !== "float-terminal") return;
 
     if (dock.activeCharacterId) {
       void window.api.invoke(IPC_COMMANDS.CHARACTER_RUNTIME_SET_ATTENTION, {
@@ -534,10 +530,9 @@ export function TerminalDock(): ReactElement | null {
 
   const handleMinimizedCharacterClick = useCallback(
     (characterId: string) => {
-      restoreTerminalDock();
-      setTerminalDockLayout(ensureCharacterSurface(dock.layout, characterId));
+      openTerminalDock(characterId);
     },
-    [dock.layout, restoreTerminalDock, setTerminalDockLayout],
+    [openTerminalDock],
   );
 
   const handleTerminalSessionRefresh = useCallback(
@@ -592,13 +587,9 @@ export function TerminalDock(): ReactElement | null {
     [loadCharacters],
   );
 
-  const minimizedCharacters = useMemo(() => {
-    return getMinimizedCharacters(characters, dock.layout);
-  }, [characters, dock.layout]);
-
   if (renderMode === "hidden") return null;
 
-  if (renderMode === "minimized-bar") {
+  if (renderMode === "float-bar") {
     return (
       <div
         className="relative flex h-full w-full items-stretch overflow-hidden bg-background/95 px-2 py-1 select-none"
@@ -619,37 +610,30 @@ export function TerminalDock(): ReactElement | null {
         >
           <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-transparent transition-colors group-hover:bg-border/70" />
         </div>
-        <div
-          className="relative shrink-0"
-          style={{ width: `${barSideSlotWidth}px` }}
-        >
-          <button
-            className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md p-1 text-xs text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground"
-            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-            onClick={closeTerminalDock}
-            title="Close"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-        <OverlayScrollStrip
-          className="h-full min-w-0 flex-1"
-          viewportClassName="flex h-full items-stretch justify-center gap-1.5"
-          noDrag
-        >
-          {minimizedCharacters.map((character) => (
-            <MinimizedSurfaceItem
-              key={character.id}
-              character={character}
-              onClick={() => handleMinimizedCharacterClick(character.id)}
-            />
-          ))}
-        </OverlayScrollStrip>
-        <div
-          className="group relative shrink-0"
-          style={{ width: `${barSideSlotWidth}px` }}
-        >
-          <MinimizedDragGrip />
+        <div className="flex min-w-0 flex-1 items-stretch justify-center">
+          <div className="mx-auto flex min-w-0 max-w-full items-stretch justify-center gap-1.5">
+            <div className="flex shrink-0 items-center justify-center">
+              <FooterIconButton title="Home" onClick={showMainDock}>
+                <House className="h-4 w-4" />
+              </FooterIconButton>
+            </div>
+            <OverlayScrollStrip
+              className="h-full min-w-0 max-w-full"
+              viewportClassName="flex h-full items-stretch justify-center gap-1.5"
+              noDrag
+            >
+              {characters.map((character) => (
+                <MinimizedSurfaceItem
+                  key={character.id}
+                  character={character}
+                  onClick={() => handleMinimizedCharacterClick(character.id)}
+                />
+              ))}
+            </OverlayScrollStrip>
+            <div className="group relative flex h-full w-7 shrink-0 items-center justify-center">
+              {footerLayout.showGrab ? <MinimizedDragGrip /> : null}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -693,10 +677,10 @@ export function TerminalDock(): ReactElement | null {
           </SplitActionButton>
           <button
             className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            onClick={() => minimizeTerminalDock(barHeight)}
-            title="Minimize"
+            onClick={closeTerminalDock}
+            title="Close"
           >
-            <Minus className="h-4 w-4" />
+            <X className="h-4 w-4" />
           </button>
         </div>
       </div>
@@ -720,53 +704,75 @@ export function TerminalDock(): ReactElement | null {
           onSyncSession={handleTerminalSessionSync}
         />
       </div>
-
-      <div
-        className="relative box-border bg-background/95 px-2 py-1"
-        style={{ height: `${barHeight}px` }}
-      >
+      {footerLayout.visible ? (
         <div
-          className="group absolute inset-x-0 -top-1 z-20 h-2 cursor-row-resize"
-          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            footerResizeRef.current = {
-              startY: event.clientY,
-              startHeight: barHeight,
-            };
-          }}
+          className="relative box-border bg-background/95 px-2 py-1"
+          style={{ height: `${barHeight}px` }}
         >
-          <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-transparent transition-colors group-hover:bg-border/70" />
-        </div>
-        <div className="flex h-full items-stretch">
           <div
-            className="shrink-0"
-            style={{ width: `${barSideSlotWidth}px` }}
-          />
-          <OverlayScrollStrip
-            className="h-full min-w-0 flex-1"
-            viewportClassName="flex h-full items-stretch justify-center gap-1.5"
-            noDrag
+            className="group absolute inset-x-0 -top-1 z-20 h-2 cursor-row-resize"
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              footerResizeRef.current = {
+                startY: event.clientY,
+                startHeight: barHeight,
+              };
+            }}
           >
-            {characters.map((character) => (
-              <GlobalCharacterTab
-                key={character.id}
-                character={character}
-                presence={getCharacterDockPresence(dock.layout, character.id)}
-                onClick={() => handleGlobalCharacterClick(character.id)}
-                onSessionAction={(action) =>
-                  void handleGlobalCharacterSessionAction(character.id, action)
-                }
-              />
-            ))}
-          </OverlayScrollStrip>
-          <div
-            className="shrink-0"
-            style={{ width: `${barSideSlotWidth}px` }}
-          />
+            <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-transparent transition-colors group-hover:bg-border/70" />
+          </div>
+          <div className="flex h-full items-stretch">
+            <div className="flex min-w-0 flex-1 items-stretch justify-center">
+              <div className="mx-auto flex min-w-0 max-w-full items-stretch justify-center gap-1.5">
+                {footerLayout.showHome ? (
+                  <div className="flex shrink-0 items-center justify-center">
+                    <FooterIconButton title="Home" onClick={showMainDock}>
+                      <House className="h-4 w-4" />
+                    </FooterIconButton>
+                  </div>
+                ) : null}
+                {footerLayout.showCharacters ? (
+                  <OverlayScrollStrip
+                    className="h-full min-w-0 max-w-full"
+                    viewportClassName="flex h-full items-stretch justify-center gap-1.5"
+                    noDrag
+                  >
+                    {characters.map((character) => (
+                      <GlobalCharacterTab
+                        key={character.id}
+                        character={character}
+                        presence={getCharacterDockPresence(dock.layout, character.id)}
+                        onClick={() => handleGlobalCharacterClick(character.id)}
+                        onSessionAction={(action) =>
+                          void handleGlobalCharacterSessionAction(character.id, action)
+                        }
+                      />
+                    ))}
+                  </OverlayScrollStrip>
+                ) : null}
+                {footerLayout.showFloatToggle ? (
+                  <div className="flex shrink-0 items-center justify-center">
+                    <FooterIconButton
+                      className={dock.floatMode ? "bg-muted/70 text-foreground" : undefined}
+                      title={dock.floatMode ? "Disable float mode" : "Enable float mode"}
+                      onClick={() => setTerminalDockFloatMode(!dock.floatMode)}
+                    >
+                      <PictureInPicture2 className="h-4 w-4" />
+                    </FooterIconButton>
+                  </div>
+                ) : null}
+                {footerLayout.showGrab ? (
+                  <div className="group relative flex h-full w-7 shrink-0 items-center justify-center">
+                    <MinimizedDragGrip />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -1625,6 +1631,32 @@ function MinimizedDragGrip(): ReactElement {
         ))}
       </div>
     </div>
+  );
+}
+
+function FooterIconButton({
+  children,
+  title,
+  onClick,
+  className,
+}: {
+  children: React.ReactNode;
+  title: string;
+  onClick: () => void;
+  className?: string;
+}): ReactElement {
+  return (
+    <button
+      className={cn(
+        "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+        className,
+      )}
+      style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      onClick={onClick}
+      title={title}
+    >
+      {children}
+    </button>
   );
 }
 

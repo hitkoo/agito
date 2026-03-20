@@ -28,6 +28,7 @@ import { GRID_COLS, GRID_ROWS, FOOTPRINTS, MAX_SESSION_HISTORY, ASSETS_DIR } fro
 import type { EngineAdapter } from './engine/types'
 import { claudeCodeAdapter } from './engine/claude-code'
 import { codexAdapter } from './engine/codex'
+import { getEnginePermissionSkipArgs } from './engine/permission-flags'
 import { CharacterRuntimeService } from './character-runtime-service'
 import { MainAuthService, type AuthProviderAdapter, type AuthProviderResult } from './auth/auth-service'
 import { createCredentialStore, type StoredAuthSession } from './auth/credential-store'
@@ -380,6 +381,11 @@ export function registerIPCHandlers(
     }
   }
 
+  const getManagedEngineAdditionalArgs = (engine: EngineType): string[] => {
+    const settings = store.getSettings()
+    return getEnginePermissionSkipArgs(engine, settings.skipPermissionPrompts)
+  }
+
   const ensureTerminalSession = (characterId: string): void => {
     if (terminalSessions.hasSession(characterId)) return
 
@@ -397,6 +403,7 @@ export function registerIPCHandlers(
       sessionId: character.currentSessionId,
       soulPath: soulContent,
       workingDirectory: sessionMapping.workingDirectory,
+      additionalArgs: getManagedEngineAdditionalArgs(sessionMapping.engineType),
     })
 
     spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, sessionMapping.workingDirectory)
@@ -725,6 +732,7 @@ export function registerIPCHandlers(
         startSessionId,
         soulPath: soulContent,
         workingDirectory,
+        additionalArgs: getManagedEngineAdditionalArgs(engine),
       })
       spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
       const updatedCharacters = characters.map((c) =>
@@ -846,7 +854,12 @@ export function registerIPCHandlers(
         throw new Error(`Working directory not found: ${workingDirectory}`)
       }
 
-      const spawnArgs = adapter.buildSpawnArgs({ sessionId, soulPath: soulContent, workingDirectory })
+      const spawnArgs = adapter.buildSpawnArgs({
+        sessionId,
+        soulPath: soulContent,
+        workingDirectory,
+        additionalArgs: getManagedEngineAdditionalArgs(engineType),
+      })
       spawnManagedSession(characterId, adapter.cliCommand, spawnArgs, workingDirectory)
       liveRuntimeMetadata.set(characterId, {
         engine: engineType,

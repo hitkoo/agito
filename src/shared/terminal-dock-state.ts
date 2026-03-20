@@ -1,11 +1,15 @@
+export type TerminalDockWindowRole = 'terminal-window' | 'float-bar'
 export type TerminalDockRenderMode =
   | 'hidden'
   | 'dock'
-  | 'minimized-bar'
+  | 'float-terminal'
+  | 'float-bar'
 
 export interface TerminalDockRenderInput {
-  visible: boolean
-  minimized: boolean
+  role: TerminalDockWindowRole
+  floatMode: boolean
+  terminalVisible: boolean
+  barVisible: boolean
 }
 
 export interface PtyResizeGuardInput {
@@ -13,6 +17,21 @@ export interface PtyResizeGuardInput {
   height: number
   cols: number
   rows: number
+}
+
+export interface TerminalDockCloseShortcutInput {
+  role: TerminalDockWindowRole
+  floatMode: boolean
+  key: string
+  metaKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+}
+
+export interface TerminalDockAlwaysOnTopLevelInput {
+  role: TerminalDockWindowRole
+  floatMode: boolean
 }
 
 export interface TerminalReplayChunk {
@@ -43,8 +62,34 @@ export function resolveSessionResumeEngine(input: {
 }
 
 export function getTerminalDockRenderMode(input: TerminalDockRenderInput): TerminalDockRenderMode {
-  if (!input.visible) return 'hidden'
-  return input.minimized ? 'minimized-bar' : 'dock'
+  if (input.role === 'float-bar') {
+    return input.barVisible ? 'float-bar' : 'hidden'
+  }
+
+  if (!input.terminalVisible) return 'hidden'
+  return input.floatMode ? 'float-terminal' : 'dock'
+}
+
+export function getTerminalDockWindowCloseShortcutAction(
+  input: TerminalDockCloseShortcutInput
+): 'close-terminal' | 'close-float-terminal' | 'prevent' | null {
+  const isCloseShortcut =
+    input.key.toLowerCase() === 'w' &&
+    !input.altKey &&
+    !input.shiftKey &&
+    (input.metaKey || input.ctrlKey)
+
+  if (!isCloseShortcut) return null
+
+  if (input.role === 'float-bar') return 'prevent'
+  return input.floatMode ? 'close-float-terminal' : 'close-terminal'
+}
+
+export function getTerminalDockAlwaysOnTopLevel(
+  input: TerminalDockAlwaysOnTopLevelInput
+): false | 'floating' | 'pop-up-menu' {
+  if (input.role === 'float-bar') return 'pop-up-menu'
+  return false
 }
 
 export function buildInitialTerminalReplay(
